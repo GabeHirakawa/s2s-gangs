@@ -340,9 +340,15 @@ existing consumers.
 
 ## 6. Commands (Core `/gang` Loop)
 
-A single `/gang` command with a subcommand dispatcher (mirrors upstream `GangCommand`), each
-subcommand a small handler. Caller identity: `Clients.fromSlot(cmd.callerSlot)?.steamId`; server
-console (`-1`) → "players only." In-gang gating happens inside handlers via
+> **Amended 2026-07-24:** the original single-`/gang`-command-plus-dispatcher design was replaced with
+> **individual `sm_`-prefixed commands** (SourceMod convention). Each row below is registered as its own
+> engine command via `registerGangCommands` from a `COMMANDS` registry — `sm_gang` (info),
+> `sm_gang_create`, `sm_gang_invite`, `sm_gang_join`, … `sm_gang_help`. Chat `!gang_create` resolves to
+> `sm_gang_create`. There is no central subcommand dispatcher. Read `subcommand X` below as the command
+> `sm_gang_X`. The handler bodies, gating, and emitted events are unchanged.
+
+Each command is a small handler taking a `CmdCtx`. Caller identity: `Clients.fromSlot(cmd.callerSlot)?.steamId`;
+server console (`-1`) → "players only." In-gang gating happens inside handlers via
 `ranks.checkPermission(steam, Perm.X)` (not SM admin flags).
 
 | subcommand | behavior | perm gate | emits |

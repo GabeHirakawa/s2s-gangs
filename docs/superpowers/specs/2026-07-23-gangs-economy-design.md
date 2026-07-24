@@ -65,16 +65,20 @@ New events (added to `GangEvents`):
 
 `reason` is `string \| null`.
 
-## Commands (added to the `/gang` dispatcher, plus one admin command)
+## Commands (individual `sm_`-registered commands — no dispatcher)
+
+Each is its own engine command (added to the `COMMANDS` registry in `handlers.ts`, registered by
+`registerGangCommands`); chat `!gang_balance` resolves to `sm_gang_balance`. The admin command is
+registered separately via `ctx.commands.registerAdmin`.
 
 | command | behavior | gate |
 |---|---|---|
-| `/gang balance` | show your personal credits and, if you can access it, your gang bank | in a gang or not (personal shows regardless) |
-| `/gang deposit <amount\|all>` | move personal credits into the gang bank (`all` = your personal balance) | in a gang + `BANK_DEPOSIT` |
-| `/credits <player> <amount> [reason]` | admin: grant (or, with a negative amount, take) credits from an online player | SM admin flag (`ADMFLAG_ROOT` by default) |
+| `sm_gang_balance` | show your personal credits and, if you can access it, your gang bank | in a gang or not (personal shows regardless) |
+| `sm_gang_deposit <amount\|all>` | move personal credits into the gang bank (`all` = your personal balance) | in a gang + `BANK_DEPOSIT` |
+| `sm_credits <player> <amount> [reason]` | admin: grant (or, with a negative amount, take) credits from an online player | `ADMFLAG.ROOT` |
 
 Deposit = `tryPurchase(steam, amount, {excludeGangCredits:true})` to take from the player, then
-`grantGang(gangId, amount, "deposit")`. `/credits` resolves an online player and calls `grantPlayer`.
+`grantGang(gangId, amount, "deposit")`. `sm_credits` resolves an online player and calls `grantPlayer`.
 
 ## Architecture / files
 
@@ -83,10 +87,12 @@ Deposit = `tryPurchase(steam, amount, {excludeGangCredits:true})` to take from t
   optional `emit`); the balance/purchase/grant logic.
 - `src/api/impl.ts` — add the `eco` namespace delegating to an `EcoManager` built inside `buildGangsApi`.
 - `src/api/events.ts` + `api.d.ts` — add the two credit events + the `eco` namespace to the contract.
-- `src/commands/handlers.ts` — `cmdBalance`, `cmdDeposit`; register in the dispatcher + help.
-- `src/commands/credits.ts` — the admin `/credits` handler (pure, testable via injected ctx).
+- `src/commands/handlers.ts` — `cmdBalance`, `cmdDeposit`; add `sm_gang_balance`/`sm_gang_deposit`
+  entries to the `COMMANDS` registry (no dispatcher).
+- `src/commands/credits.ts` — the admin `sm_credits` handler (pure `runCredits(ctx)` + a
+  `runCreditsCommand(api, cmd)` runtime entry).
 - `src/plugin.ts` — register both balance stat descriptors; construct nothing extra (EcoManager lives in
-  `buildGangsApi`); register the `/credits` admin command.
+  `buildGangsApi`); register the `sm_credits` admin command via `ctx.commands.registerAdmin`.
 
 **Boundary rule unchanged:** `eco` methods traffic in plain numbers/strings; events carry plain data.
 Balance is a JS-safe integer (credits are small), unlike SteamID64.

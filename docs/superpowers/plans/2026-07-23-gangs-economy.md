@@ -15,7 +15,7 @@
 - Credits are JS-safe integers (not SteamID64) — plain `number` across the boundary.
 - `src` stays within `lib: ES2020` (no `Array.at`/`findLast`/etc.).
 - Faithful semantics: gang bank counts toward a member's balance ONLY if they have `Perm.BANK_WITHDRAW`; `tryPurchase` pulls from the gang bank first, then the player; an unaffordable purchase writes nothing and returns the negative hypothetical remaining.
-- Existing signatures to consume: `StatManager.getForGang<T>/setForGang<T>/getForPlayer<T>/setForPlayer<T>`, `PlayerManager.getPlayer(steam, create?)`, `RankManager.getRank(gangId, rank)`, `Perm`/`hasPerm` from `src/domain/perm`, `buildGangsApi(m: Managers, emit: EmitFn)` where `Managers = { gangs, players, ranks, stats }`, `CmdCtx` from `src/commands/ctx`, `handlers`/`dispatch` in `src/commands/handlers.ts`, `runGangCommand` in `src/commands/gang.ts`, `ctx.commands.registerAdmin(name, flags, handler)`.
+- Existing signatures to consume: `StatManager.getForGang<T>/setForGang<T>/getForPlayer<T>/setForPlayer<T>`, `PlayerManager.getPlayer(steam, create?)`, `RankManager.getRank(gangId, rank)`, `Perm`/`hasPerm` from `src/domain/perm`, `buildGangsApi(m: Managers, emit: EmitFn)` where `Managers = { gangs, players, ranks, stats }`, `CmdCtx` from `src/commands/ctx`, the `COMMANDS` registry + `runCommand(name, ctx)` test helper in `src/commands/handlers.ts`, `registerGangCommands(ctx.commands, api, () => msg)` in `src/commands/gang.ts`, `ctx.commands.registerAdmin(name, flags, handler)` (admin commands are `sm_`-prefixed and registered outside the COMMANDS registry).
 - Tests under `test/`; run `npm test` (full) green + `npx tsc --noEmit -p tsconfig.json` clean before each commit.
 
 ---
@@ -367,27 +367,27 @@ Then add the `eco` namespace to the returned object (e.g. after `stats`):
 
 **Interfaces:** Adds `cmdBalance`, `cmdDeposit` handlers registered under `balance`/`deposit`; new `Messages` methods. Consumes `api.eco`, `Perm.BANK_DEPOSIT`.
 
-- [ ] **Step 1: Failing test** — `test/commands/eco-handlers.test.ts`: build the same harness as `test/commands/handlers.test.ts` (copy its `harness()` — an api with stats registered) and additionally register `GANG_BALANCE_STAT`/`PLAYER_BALANCE_STAT`, then:
+- [ ] **Step 1: Failing test** — `test/commands/eco-handlers.test.ts`: build the same harness as `test/commands/handlers.test.ts` (copy its `harness()`, importing `runCommand` from `../../src/commands/handlers`) and additionally register `GANG_BALANCE_STAT`/`PLAYER_BALANCE_STAT`, then:
 ```ts
-// (harness identical to handlers.test.ts's, plus:)
+// (harness identical to handlers.test.ts's — imports { runCommand, INVITATION_STAT, ... }, plus:)
 //   api.stats.register(GANG_BALANCE_STAT); api.stats.register(PLAYER_BALANCE_STAT);
 it("deposit moves personal credits into the gang bank and needs BANK_DEPOSIT", async () => {
   const h = await harness();
   h.online.push({ steam: "owner", name: "O" });
-  await dispatch(h.ctx("owner", ["Wolves"]), "create");
+  await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
   const gang = await h.api.gangs.getByMember("owner");
   await h.api.eco.grantPlayer("owner", 100);
-  await dispatch(h.ctx("owner", ["40"]), "deposit");
+  await runCommand("sm_gang_deposit", h.ctx("owner", ["40"]));
   expect(await h.api.eco.getGangBalance(gang!.gangId)).toBe(40);
   expect(await h.api.eco.getBalance("owner", true)).toBe(60);
 });
 it("balance reports personal credits", async () => {
   const h = await harness();
   h.online.push({ steam: "owner", name: "O" });
-  await dispatch(h.ctx("owner", ["Wolves"]), "create");
+  await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
   await h.api.eco.grantPlayer("owner", 30);
   h.replies.length = 0;
-  await dispatch(h.ctx("owner", []), "balance");
+  await runCommand("sm_gang_balance", h.ctx("owner", []));
   expect(h.replies.join("\n")).toContain("30");
 });
 ```
@@ -440,7 +440,7 @@ async function cmdDeposit(ctx: CmdCtx): Promise<void> {
   ctx.reply(ctx.msg.deposited(amount));
 }
 ```
-Register them in the `handlers` map (add `balance: cmdBalance, deposit: cmdDeposit,`) and add `balance, deposit` to the help subcommand list string.
+Register them by adding entries to the `COMMANDS` array in `handlers.ts`: `{ name: "sm_gang_balance", run: cmdBalance }` and `{ name: "sm_gang_deposit", run: cmdDeposit }`. (No dispatcher/help-string edit — `cmdHelp` derives its list from `COMMANDS`.)
 
 - [ ] **Step 5: Run — passes.** `npm test test/commands/eco-handlers.test.ts`
 - [ ] **Step 6: Commit.** `git add src/messages.ts src/commands/handlers.ts test/commands/eco-handlers.test.ts && git commit -m "feat(eco): /gang balance and /gang deposit"`
@@ -522,7 +522,7 @@ export interface CreditsCtx {
 }
 
 export async function runCredits(ctx: CreditsCtx): Promise<void> {
-  if (ctx.args.length < 2) { ctx.reply("Usage: /credits <player> <amount> [reason]"); return; }
+  if (ctx.args.length < 2) { ctx.reply("Usage: sm_credits <player> <amount> [reason]"); return; }
   const matches = ctx.online(ctx.args[0]);
   if (matches.length !== 1) { ctx.reply(`Could not find a unique player for "${ctx.args[0]}".`); return; }
   const amount = parseInt(ctx.args[1], 10);
@@ -569,9 +569,9 @@ export function runCreditsCommand(api: GangsApi, cmd: CommandInvocation): void {
   api.stats.register(GANG_BALANCE_STAT);
   api.stats.register(PLAYER_BALANCE_STAT);
 ```
-  - After `ctx.commands.register("gang", ...)`, add:
+  - After `registerGangCommands(ctx.commands, api, () => msg);`, add:
 ```ts
-  ctx.commands.registerAdmin("credits", ADMFLAG.ROOT, (cmd) => runCreditsCommand(api, cmd));
+  ctx.commands.registerAdmin("sm_credits", ADMFLAG.ROOT, (cmd) => runCreditsCommand(api, cmd));
 ```
 
 - [ ] **Step 2: Full suite + typecheck.** `npm test` (all green) and `npx tsc --noEmit -p tsconfig.json` (clean).
