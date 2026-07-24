@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "main": "src/plugin.ts",
+  "types": "api.d.ts",
+  "s2script": {
+    "id": "gangs",
+    "publishes": { "@gangs/api": "0.1.0" },
+    "config": {
+      "table_prefix": { "type": "string", "default": "gang" },
+      "db_connection": { "type": "string", "default": "default" },
+      "currency_name": { "type": "string", "default": "credits" },
+      "chat_tag": { "type": "string", "default": "Gangs>" }
+    }
+  },
   "scripts": {
     "build": "s2s build .",
     "test": "vitest run"
