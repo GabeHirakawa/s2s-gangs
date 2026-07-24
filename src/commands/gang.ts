@@ -4,6 +4,7 @@ import { Clients } from "@s2script/sdk/clients";
 import type { GangsApi } from "../../api";
 import type { Messages } from "../messages";
 import { COMMANDS } from "./handlers";
+import { runCredits } from "./credits";
 import type { CmdCtx, OnlinePlayer } from "./ctx";
 
 /** Resolve currently-connected players matching a name substring or an exact SteamID. */
@@ -38,4 +39,13 @@ export function registerGangCommands(commands: CtxCommands, api: GangsApi, getMs
       });
     });
   }
+}
+
+/** Runtime entry for the admin sm_credits command: build the online resolver + run runCredits, wrapping errors. */
+export function runCreditsCommand(api: GangsApi, cmd: CommandInvocation): void {
+  const args = cmd.argString.length ? cmd.argString.split(/\s+/) : [];
+  runCredits({ args, reply: (m) => cmd.reply(m), api, online }).catch((e) => {
+    cmd.reply("An error occurred while running that command.");
+    console.log("[gangs] sm_credits error:", e);
+  });
 }

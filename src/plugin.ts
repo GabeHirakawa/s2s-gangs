@@ -1,6 +1,7 @@
 import { plugin } from "@s2script/sdk/plugin";
 import { Database } from "@s2script/sdk/db";
 import { config } from "@s2script/sdk/config";
+import { ADMFLAG } from "@s2script/sdk/admin";
 import type { GangsApi } from "../api";
 import { ensureCoreTables } from "./db/schema";
 import { GangsRepo } from "./db/gangs.repo";
@@ -14,8 +15,9 @@ import { StatManager } from "./managers/stat-manager";
 import { buildGangsApi } from "./api/impl";
 import type { EmitFn, GangEvents } from "./api/events";
 import { makeMessages } from "./messages";
-import { registerGangCommands } from "./commands/gang";
+import { registerGangCommands, runCreditsCommand } from "./commands/gang";
 import { INVITATION_STAT, PENDING_STAT, DOOR_POLICY_STAT } from "./commands/handlers";
+import { GANG_BALANCE_STAT, PLAYER_BALANCE_STAT } from "./eco/balance";
 
 export default plugin(async (ctx) => {
   const prefix = config.getString("table_prefix") || "gang";
@@ -42,11 +44,14 @@ export default plugin(async (ctx) => {
   api.stats.register(INVITATION_STAT);
   api.stats.register(PENDING_STAT);
   api.stats.register(DOOR_POLICY_STAT);
+  api.stats.register(GANG_BALANCE_STAT);
+  api.stats.register(PLAYER_BALANCE_STAT);
 
   handle = ctx.publish<GangsApi>("@gangs/api", api);
 
   let msg = makeMessages(tag);
   registerGangCommands(ctx.commands, api, () => msg);
+  ctx.commands.registerAdmin("sm_credits", ADMFLAG.ROOT, (cmd) => runCreditsCommand(api, cmd));
 
   // Live-reload the chat tag (design §7); the command closure reads `msg` by reference.
   ctx.config.onChange(() => { msg = makeMessages(config.getString("chat_tag") || "Gangs>"); });
