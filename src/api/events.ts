@@ -7,6 +7,8 @@ export interface GangEvents {
   member_rank_changed: { gangId: number; steam: string; oldRank: number; newRank: number };
   invite_created: { gangId: number; inviter: string; invited: string };
   invite_revoked: { gangId: number; invited: string };
+  player_credits_changed: { steam: string; balance: number; delta: number; reason: string | null };
+  gang_credits_changed: { gangId: number; balance: number; delta: number; reason: string | null };
 }
 
 export type EmitFn = <K extends keyof GangEvents>(event: K, payload: GangEvents[K]) => void;
@@ -14,4 +16,5 @@ export type EmitFn = <K extends keyof GangEvents>(event: K, payload: GangEvents[
 export const GANG_EVENTS: readonly (keyof GangEvents)[] = [
   "gang_created", "gang_deleted", "gang_renamed", "member_joined",
   "member_left", "member_rank_changed", "invite_created", "invite_revoked",
+  "player_credits_changed", "gang_credits_changed",
 ];
