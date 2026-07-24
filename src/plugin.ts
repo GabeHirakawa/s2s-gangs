@@ -15,7 +15,7 @@ import { StatManager } from "./managers/stat-manager";
 import { buildGangsApi } from "./api/impl";
 import type { EmitFn, GangEvents } from "./api/events";
 import { makeMessages } from "./messages";
-import { registerGangCommands, runCreditsCommand } from "./commands/gang";
+import { registerGangCommands, registerMenuCommand, runCreditsCommand } from "./commands/gang";
 import { INVITATION_STAT, PENDING_STAT, DOOR_POLICY_STAT } from "./commands/handlers";
 import { GANG_BALANCE_STAT, PLAYER_BALANCE_STAT } from "./eco/balance";
 
@@ -51,6 +51,7 @@ export default plugin(async (ctx) => {
 
   let msg = makeMessages(tag);
   registerGangCommands(ctx.commands, api, () => msg);
+  registerMenuCommand(ctx.commands, api, () => msg);
   ctx.commands.registerAdmin("sm_credits", ADMFLAG.ROOT, (cmd) => runCreditsCommand(api, cmd));
 
   // Live-reload the chat tag (design §7); the command closure reads `msg` by reference.
