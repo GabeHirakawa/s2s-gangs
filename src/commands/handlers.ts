@@ -3,6 +3,7 @@ export type { CmdCtx, OnlinePlayer } from "./ctx";
 import type { StatDescriptor } from "../db/instance.repo";
 import { Perm } from "../domain/perm";
 import { DoorPolicy } from "../domain/types";
+import { cmdRanks, cmdRankCreate, cmdRankRename, cmdRankDelete, cmdRankPerm } from "./ranks";
 
 export const INVITATION_STAT: StatDescriptor = {
   id: "gang_invitation", scope: "gang", kind: "record",
@@ -18,14 +19,14 @@ export const DOOR_POLICY_STAT: StatDescriptor = {
   id: "gang_door_policy", scope: "gang", kind: "scalar", column: "INT",
 };
 
-async function requireGang(ctx: CmdCtx): Promise<{ steam: string; gangId: number; rank: number } | null> {
+export async function requireGang(ctx: CmdCtx): Promise<{ steam: string; gangId: number; rank: number } | null> {
   if (ctx.steam === null) { ctx.reply("Only players can use this."); return null; }
   const p = await ctx.api.players.get(ctx.steam, false);
   if (!p || p.gangId === null || p.gangRank === null) { ctx.reply(ctx.msg.notInGang()); return null; }
   return { steam: ctx.steam, gangId: p.gangId, rank: p.gangRank };
 }
 
-async function gate(ctx: CmdCtx, steam: string, perm: number, node: string): Promise<boolean> {
+export async function gate(ctx: CmdCtx, steam: string, perm: number, node: string): Promise<boolean> {
   if (await ctx.api.ranks.checkPermission(steam, perm)) return true;
   ctx.reply(ctx.msg.noPermission(node));
   return false;
@@ -245,6 +246,11 @@ export const COMMANDS: GangCommand[] = [
   { name: "sm_gang_demote", run: (ctx) => changeRank(ctx, "demote") },
   { name: "sm_gang_transfer", run: cmdTransfer },
   { name: "sm_gang_members", run: cmdMembers },
+  { name: "sm_gang_ranks", run: cmdRanks },
+  { name: "sm_gang_rank_create", run: cmdRankCreate },
+  { name: "sm_gang_rank_rename", run: cmdRankRename },
+  { name: "sm_gang_rank_delete", run: cmdRankDelete },
+  { name: "sm_gang_rank_perm", run: cmdRankPerm },
   { name: "sm_gang_doorpolicy", run: cmdDoorPolicy },
   { name: "sm_gang_disband", run: cmdDisband },
   { name: "sm_gang_balance", run: cmdBalance },
