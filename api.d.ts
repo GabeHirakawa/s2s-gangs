@@ -49,6 +49,7 @@ export interface GangsApi {
     create(gangId: number, name: string, rank: number, permissions: number): Promise<GangRank | null>;
     update(gangId: number, rank: GangRank): Promise<boolean>;
     delete(gangId: number, rank: number, strat: DeleteStrat): Promise<boolean>;
+    setPermission(gangId: number, rank: number, perm: number, on: boolean): Promise<boolean>;
     assignDefaults(gangId: number): Promise<GangRank[]>;
     checkPermission(steam: string, perm: number): Promise<boolean>;
     getJoinRank(gangId: number): Promise<GangRank | null>;

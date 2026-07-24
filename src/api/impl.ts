@@ -125,6 +125,12 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
       create: (gangId, name, rank, permissions) => m.ranks.createRank(gangId, name, rank, permissions),
       update: (gangId, rank) => m.ranks.updateRank(gangId, rank),
       delete: (gangId, rank, strat) => m.ranks.deleteRank(gangId, rank, strat),
+      async setPermission(gangId, rank, perm, on) {
+        const r = await m.ranks.getRank(gangId, rank);
+        if (!r) return false;
+        const permissions = on ? (r.permissions | perm) : (r.permissions & ~perm);
+        return m.ranks.updateRank(gangId, { ...r, permissions });
+      },
       assignDefaults: (gangId) => m.ranks.assignDefaultRanks(gangId),
       async checkPermission(steam, perm) {
         const player = await m.players.getPlayer(steam, false);

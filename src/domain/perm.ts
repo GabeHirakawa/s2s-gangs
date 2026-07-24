@@ -40,6 +40,27 @@ export function describe(perms: number): string {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
+/** snake_case name → flag, derived from FRIENDLY's keys (the single-bit + MANAGE_INVITES perms). */
+export const PERM_NAMES: Record<string, number> = Object.fromEntries(
+  Object.keys(FRIENDLY).map((k) => [k.toLowerCase(), (Perm as Record<string, number>)[k]]),
+);
+
+export function permFromName(name: string): number | null {
+  const flag = PERM_NAMES[name.toLowerCase()];
+  return flag === undefined ? null : flag;
+}
+
+export function permName(flag: number): string | null {
+  for (const [name, f] of Object.entries(PERM_NAMES)) if (f === flag) return name;
+  return null;
+}
+
+/** The permissions a `rank_perm` command may toggle: single, human-managed flags. */
+export const EDITABLE_PERMS: { name: string; flag: number; label: string }[] =
+  Object.entries(FRIENDLY).map(([k, label]) => ({
+    name: k.toLowerCase(), flag: (Perm as Record<string, number>)[k], label,
+  }));
+
 const MEMBER = BANK_DEPOSIT | VIEW_MEMBER_DETAILS | PURCHASE_PERKS | SEND_GANG_CHAT;
 const OFFICER = MEMBER | MANAGE_INVITES | KICK_OTHERS;
 const MANAGER = OFFICER | MANAGE_PERKS | MANAGE_RANKS | PROMOTE_OTHERS | DEMOTE_OTHERS | BANK_WITHDRAW;
