@@ -262,6 +262,17 @@ interface GangsApi {
     update(p: GangPlayer): Promise<boolean>;
     delete(steam: string): Promise<boolean>;
   };
+  members: {                     // membership mutations that EMIT lifecycle events
+    add(gangId: number, steam: string, rank: number): Promise<boolean>;       // member_joined
+    remove(steam: string, reason: "leave"|"kick"|"disband"): Promise<boolean>;// member_left
+    setRank(steam: string, newRank: number): Promise<boolean>;                // member_rank_changed
+  };
+  invites: {
+    create(gangId: number, inviter: string, invited: string, nowSec: number): Promise<boolean>; // invite_created
+    revoke(gangId: number, invited: string): Promise<boolean>;               // invite_revoked
+    outgoing(gangId: number): Promise<string[]>;
+    pending(steam: string): Promise<number[]>;
+  };
   ranks: {
     getAll(gangId: number): Promise<GangRank[]>;
     get(gangId: number, rank: number): Promise<GangRank | null>;
@@ -301,6 +312,8 @@ const gang = await gangs.gangs.getByMember(steamId);
 ```
 
 ### Events (via publish handle `.emit`, consumed via `api.on`)
+
+Membership/invite changes go through the `members`/`invites` methods (and `gangs.delete`), which is what fires these events — for command handlers and external consumers alike. Raw `players.update` does not emit; command handlers route through `members`/`invites`.
 
 | event | payload |
 |---|---|
@@ -351,6 +364,12 @@ console (`-1`) → "players only." In-gang gating happens inside handlers via
 
 Invite acceptance goes through `join`, matching upstream. Invites target **online players only**
 (resolved by name or SteamID among connected clients).
+
+**Door policy in v0.1:** `OPEN` lets anyone `join`; `INVITE_ONLY` and `REQUEST_ONLY` both require a
+standing invite to join. The request-to-join flow (a player asking a closed gang to let them in, and
+an officer approving) is **deferred** — the `RequestedSteams` column exists in the schema for
+forward-compatibility but is not yet written. `doorpolicy` still accepts `request` (stored), it just
+behaves like `invite` until the request flow lands.
 
 ## 7. Config, Translations, Error Handling
 

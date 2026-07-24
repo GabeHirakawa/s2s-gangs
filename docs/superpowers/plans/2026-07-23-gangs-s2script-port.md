@@ -18,6 +18,7 @@
 - No manager caching, no write mutex (single-threaded event loop; use `lastInsertId` for new gang ids).
 - Every `SqlValue` is `string | number | boolean | null`. Tests bind via the better-sqlite3 adapter (Task 0), which coerces `boolean → 0/1`.
 - TDD: each task ends green and committed. Test files live under `test/` and are excluded from the plugin build (`tsconfig.json` includes only `src`).
+- **`src/` must stay within `lib: ES2020`** (the repo's `tsconfig.json`). Do NOT use ES2022+ APIs in `src` (`Array.prototype.at`, `findLast`, `Object.hasOwn`, etc.) — use index arithmetic instead. Test files under `test/` run on Node via vitest and may use newer APIs.
 
 ---
 
@@ -238,6 +239,12 @@ describe("Perm", () => {
     expect(DEFAULT_RANKS[0]).toMatchObject({ rank: 0, permissions: Perm.OWNER });
     expect(DEFAULT_RANKS.at(-1)).toMatchObject({ rank: 100, name: "Member" });
   });
+  it("pins the Member permission bitfield (wire format)", () => {
+    const member = DEFAULT_RANKS.find((r) => r.rank === 100)!;
+    expect(member.permissions).toBe(
+      Perm.BANK_DEPOSIT | Perm.VIEW_MEMBER_DETAILS | Perm.PURCHASE_PERKS | Perm.SEND_GANG_CHAT
+    );
+  });
 });
 ```
 
@@ -284,7 +291,7 @@ export function describe(perms: number): string {
   if (names.length === 0) return "No permissions";
   if (names.length === 1) return names[0];
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
 const MEMBER = BANK_DEPOSIT | VIEW_MEMBER_DETAILS | PURCHASE_PERKS | SEND_GANG_CHAT;
@@ -501,7 +508,7 @@ git commit -m "feat: core table schema creation"
 
 - [ ] **Step 1: Write the failing test.** Create `test/db/gangs.repo.test.ts`:
 ```ts
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { makeTestDb } from "../support/sqlite";
 import { ensureCoreTables } from "../../src/db/schema";
 import { GangsRepo } from "../../src/db/gangs.repo";
@@ -847,10 +854,16 @@ describe("StatStore", () => {
     await store.set(record, 7, { InvitedSteams: "111", MaxAmo: 5 });
     expect(await store.get(record, 7)).toEqual({ InvitedSteams: "111", MaxAmo: 5 });
   });
-  it("get on a never-created stat table returns null (no throw)", async () => {
+  it("remove on a never-created stat table returns false (no throw)", async () => {
     const db = makeTestDb();
     const store = new StatStore(db, "gang_player_stats", "Steam", "BIGINT");
-    expect(await store.get(scalar, 999)).toBeNull();
+    expect(await store.remove("gang_door_policy", 999)).toBe(false);
+  });
+  it("rejects an invalid stat id (no SQL injection via register)", async () => {
+    const db = makeTestDb();
+    const store = new StatStore(db, "gang_gang_stats", "GangId", "INTEGER");
+    const bad = { id: "x; DROP TABLE t", scope: "gang", kind: "scalar", column: "INT" } as const;
+    await expect(store.get(bad, 1)).rejects.toThrow(/invalid sql identifier/);
   });
 });
 ```
@@ -870,14 +883,23 @@ export type StatDescriptor = ScalarStat | RecordStat;
 const cols = (d: StatDescriptor): Array<[string, ColumnType]> =>
   d.kind === "scalar" ? [[d.id, d.column]] : Object.entries(d.columns);
 
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** stat ids and column names are interpolated into SQL and register() is reachable across the API
+ *  boundary, so identifiers are validated (never parameterizable in SQL). */
+function assertIdent(name: string): string {
+  if (!IDENT.test(name)) throw new Error(`invalid sql identifier: ${name}`);
+  return name;
+}
+
 export class StatStore {
   private ensured = new Set<string>();
   constructor(private db: Db, private tablePrefix: string, private pk: string, private pkType: string) {}
 
-  private table(statId: string): string { return `${this.tablePrefix}_${statId}`; }
+  private table(statId: string): string { return `${this.tablePrefix}_${assertIdent(statId)}`; }
 
   private async ensure(d: StatDescriptor): Promise<void> {
     if (this.ensured.has(d.id)) return;
+    for (const [n] of cols(d)) assertIdent(n);
     const colDefs = cols(d).map(([n, t]) => `${n} ${t}`).join(", ");
     await this.db.execute(
       `CREATE TABLE IF NOT EXISTS ${this.table(d.id)} (${this.pk} ${this.pkType} NOT NULL PRIMARY KEY, ${colDefs})`
@@ -915,7 +937,7 @@ export class StatStore {
   async remove(statId: string, key: string | number): Promise<boolean> {
     try {
       const res = await this.db.execute(
-        `DELETE FROM ${this.tablePrefix}_${statId} WHERE ${this.pk} = ?`, [key]
+        `DELETE FROM ${this.table(statId)} WHERE ${this.pk} = ?`, [key]
       );
       return res.changes > 0;
     } catch (e) {
@@ -1019,7 +1041,7 @@ export class PlayerManager {
 
   async findPlayerInGang(gangId: number, query: string): Promise<GangPlayer | null> {
     const members = await this.players.members(gangId);
-    const bySteam = members.filter((p) => query.includes(p.steam));
+    const bySteam = members.filter((p) => p.steam === query);
     if (bySteam.length === 1) return bySteam[0];
     const q = query.toLowerCase();
     const byName = members.filter((p) => p.name !== null && p.name.toLowerCase().includes(q));
@@ -1129,6 +1151,7 @@ export class RankManager {
 
   async addRank(gangId: number, rank: GangRank): Promise<boolean> {
     if (rank.rank < 0) return false;
+    if (rank.rank > 0 && hasPerm(rank.permissions, Perm.OWNER)) return false; // only rank 0 may be OWNER
     if (await this.ranks.get(gangId, rank.rank)) return false;
     return this.ranks.insert(gangId, rank);
   }
@@ -1216,7 +1239,7 @@ git commit -m "feat: RankManager with default ranks and delete strategies"
   - `getGangs(): Promise<Gang[]>`
   - `getGang(id: number): Promise<Gang | null>`
   - `getGangByMember(steam: string): Promise<Gang | null>`
-  - `createGang(name: string, ownerSteam: string): Promise<Gang | null>` (null if owner already in a gang returns null via caller check; throws only on hard invariant)
+  - `createGang(name: string, ownerSteam: string): Promise<Gang | null>` — returns `null` on failure OR if the owner is already in a gang (expected failure, never throws; per design §7)
   - `updateGang(gang: Gang): Promise<boolean>`
   - `deleteGang(id: number): Promise<boolean>`
 
@@ -1287,8 +1310,7 @@ export class GangManager {
   async createGang(name: string, ownerSteam: string): Promise<Gang | null> {
     const player = await this.players.getPlayer(ownerSteam);
     if (!player) return null;
-    if (player.gangId !== null)
-      throw new Error(`Player ${ownerSteam} is already in gang ${player.gangId}`);
+    if (player.gangId !== null) return null; // expected failure — already in a gang (design §7: no throw)
 
     const id = await this.gangs.insert(name);
     if (!id) return null;
@@ -1497,7 +1519,8 @@ git commit -m "feat: gang lifecycle event definitions"
   - `interface Managers { gangs: GangManager; players: PlayerManager; ranks: RankManager; stats: StatManager }`
   - `buildGangsApi(m: Managers, emit: EmitFn): GangsApi`
   - `api.d.ts` exports `GangsApi` and re-exports DTOs (`Gang`, `GangPlayer`, `GangRank`, `Membership`, `DoorPolicy`, `DeleteStrat`, `Perm`, `StatDescriptor`, `GangEvents`).
-- The `GangsApi` interface shape is exactly spec §5 plus `players.getMembership`.
+- The `GangsApi` interface shape is spec §5 plus `players.getMembership`, the `members` namespace (`add`/`remove`/`setRank`), and the `invites` namespace (`create`/`revoke`/`outgoing`/`pending`).
+- **Every membership/invite mutation emits its event** — `members.add → member_joined`, `members.remove → member_left`, `members.setRank → member_rank_changed`, `invites.create → invite_created`, `invites.revoke → invite_revoked`, and `gangs.delete → member_left{reason:"disband"}` per member then `gang_deleted`. Command handlers (Task 16) MUST route through these methods so events fire for both commands and external consumers.
 
 - [ ] **Step 1: Write the failing test.** Create `test/api/impl.test.ts`:
 ```ts
@@ -1544,6 +1567,28 @@ describe("buildGangsApi", () => {
     const { a } = await api();
     expect(await a.gangs.getByMember("ghost")).toBeNull();
   });
+
+  it("members.add/setRank/remove emit lifecycle events", async () => {
+    const { a, players, events } = await api();
+    await players.createPlayer("owner", "O");
+    await a.gangs.create("Falcons", "owner");
+    await players.createPlayer("bob", "Bob");
+    expect(await a.members.add(1, "bob", 100)).toBe(true);
+    expect(events).toContainEqual(["member_joined", { gangId: 1, steam: "bob", rank: 100 }]);
+    await a.members.setRank("bob", 50);
+    expect(events).toContainEqual(["member_rank_changed", { gangId: 1, steam: "bob", oldRank: 100, newRank: 50 }]);
+    await a.members.remove("bob", "kick");
+    expect(events).toContainEqual(["member_left", { gangId: 1, steam: "bob", reason: "kick" }]);
+  });
+
+  it("gangs.delete emits member_left(disband) per member then gang_deleted", async () => {
+    const { a, players, events } = await api();
+    await players.createPlayer("owner", "O");
+    await a.gangs.create("Falcons", "owner");
+    expect(await a.gangs.delete(1)).toBe(true);
+    expect(events).toContainEqual(["member_left", { gangId: 1, steam: "owner", reason: "disband" }]);
+    expect(events).toContainEqual(["gang_deleted", { gangId: 1 }]);
+  });
 });
 ```
 
@@ -1578,6 +1623,24 @@ export interface GangsApi {
     update(p: GangPlayer): Promise<boolean>;
     delete(steam: string): Promise<boolean>;
   };
+  members: {
+    /** Assign a player into a gang at `rank`; emits `member_joined`. */
+    add(gangId: number, steam: string, rank: number): Promise<boolean>;
+    /** Remove a player from their gang; emits `member_left` with the reason. */
+    remove(steam: string, reason: "leave" | "kick" | "disband"): Promise<boolean>;
+    /** Change a member's rank; emits `member_rank_changed`. */
+    setRank(steam: string, newRank: number): Promise<boolean>;
+  };
+  invites: {
+    /** Record an outgoing invite (+ the target's pending list); emits `invite_created`. */
+    create(gangId: number, inviter: string, invited: string, nowSec: number): Promise<boolean>;
+    /** Remove an outgoing invite (+ the target's pending entry); emits `invite_revoked`. */
+    revoke(gangId: number, invited: string): Promise<boolean>;
+    /** SteamID64s the gang has invited. */
+    outgoing(gangId: number): Promise<string[]>;
+    /** Gang ids that have invited the player. */
+    pending(steam: string): Promise<number[]>;
+  };
   ranks: {
     getAll(gangId: number): Promise<GangRank[]>;
     get(gangId: number, rank: number): Promise<GangRank | null>;
@@ -1601,6 +1664,10 @@ export interface GangsApi {
 }
 ```
 > Verify `s2s build` accepts a re-exporting contract. If it rejects re-exports, inline the DTO/enum declarations directly into `api.d.ts` (they must match the domain definitions).
+>
+> **Consumer runtime-value caveat:** `api.d.ts` is a declaration file, so external consumers get *types* from it but cannot import runtime values (`Perm`, `DoorPolicy`, `DeleteStrat`) from it. This plugin's own `src` imports those from `src/domain/*` (real modules), so it builds fine. For v0.1, external consumers treat the `Perm` bit values as the documented stable integers; exposing them at runtime through the API is deferred.
+>
+> **Nested-namespace publish is UNVERIFIED (see Task 17 Step 7 item 10).** `GangsApi` has no top-level methods — everything is two levels deep (`api.gangs.getAll`). If the producer→consumer proxy structure-copies the impl instead of proxying it, nested functions would arrive stripped for consumers (the plugin's own local calls are unaffected). Fallback if the consumer smoke test fails: flatten the published surface to top-level methods (`gangs_getAll`, `members_add`, …) and keep the namespaced object for local use only.
 
 - [ ] **Step 4: Implement `src/api/impl.ts`.** Create it:
 ```ts
@@ -1611,6 +1678,14 @@ import type { StatManager } from "../managers/stat-manager";
 import type { EmitFn } from "./events";
 import type { GangsApi } from "../../api";
 import type { Membership } from "../domain/types";
+import {
+  emptyInvitation, addInvitation, removeInvitation, invitedList,
+  addPending, removePending, pendingList,
+  type InvitationData, type PendingInvitationData,
+} from "../domain/invitation";
+
+const INVITATION = "gang_invitation";
+const PENDING = "pending_invitation";
 
 export interface Managers {
   gangs: GangManager; players: PlayerManager; ranks: RankManager; stats: StatManager;
@@ -1633,8 +1708,13 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
         return ok;
       },
       async delete(id) {
+        const members = await m.players.getMembers(id); // capture before the cascade clears them
         const ok = await m.gangs.deleteGang(id);
-        if (ok) emit("gang_deleted", { gangId: id });
+        if (ok) {
+          for (const mem of members)
+            emit("member_left", { gangId: id, steam: mem.steam, reason: "disband" });
+          emit("gang_deleted", { gangId: id });
+        }
         return ok;
       },
     },
@@ -1654,6 +1734,58 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
       },
       update: (p) => m.players.updatePlayer(p),
       delete: (steam) => m.players.deletePlayer(steam),
+    },
+    members: {
+      async add(gangId, steam, rank) {
+        const p = await m.players.getPlayer(steam);
+        if (!p) return false;
+        const ok = await m.players.updatePlayer({ ...p, gangId, gangRank: rank });
+        if (ok) emit("member_joined", { gangId, steam, rank });
+        return ok;
+      },
+      async remove(steam, reason) {
+        const p = await m.players.getPlayer(steam, false);
+        if (!p || p.gangId === null) return false;
+        const gangId = p.gangId;
+        const ok = await m.players.updatePlayer({ ...p, gangId: null, gangRank: null });
+        if (ok) emit("member_left", { gangId, steam, reason });
+        return ok;
+      },
+      async setRank(steam, newRank) {
+        const p = await m.players.getPlayer(steam, false);
+        if (!p || p.gangId === null || p.gangRank === null) return false;
+        const oldRank = p.gangRank;
+        if (oldRank === newRank) return true;
+        const ok = await m.players.updatePlayer({ ...p, gangRank: newRank });
+        if (ok) emit("member_rank_changed", { gangId: p.gangId, steam, oldRank, newRank });
+        return ok;
+      },
+    },
+    invites: {
+      async create(gangId, inviter, invited, nowSec) {
+        const data = (await m.stats.getForGang<InvitationData>(gangId, INVITATION)) ?? emptyInvitation();
+        await m.stats.setForGang(gangId, INVITATION, addInvitation(data, inviter, invited, nowSec));
+        const pend = (await m.stats.getForPlayer<PendingInvitationData>(invited, PENDING)) ?? { InvitingGangs: "" };
+        await m.stats.setForPlayer(invited, PENDING, addPending(pend, gangId));
+        emit("invite_created", { gangId, inviter, invited });
+        return true;
+      },
+      async revoke(gangId, invited) {
+        const data = await m.stats.getForGang<InvitationData>(gangId, INVITATION);
+        if (data) await m.stats.setForGang(gangId, INVITATION, removeInvitation(data, invited));
+        const pend = await m.stats.getForPlayer<PendingInvitationData>(invited, PENDING);
+        if (pend) await m.stats.setForPlayer(invited, PENDING, removePending(pend, gangId));
+        emit("invite_revoked", { gangId, invited });
+        return true;
+      },
+      async outgoing(gangId) {
+        const data = await m.stats.getForGang<InvitationData>(gangId, INVITATION);
+        return data ? invitedList(data) : [];
+      },
+      async pending(steam) {
+        const pend = await m.stats.getForPlayer<PendingInvitationData>(steam, PENDING);
+        return pend ? pendingList(pend) : [];
+      },
     },
     ranks: {
       getAll: (gangId) => m.ranks.getRanks(gangId),
@@ -1700,7 +1832,7 @@ git commit -m "feat: buildGangsApi and published @gangs/api contract"
 - Test: `test/messages.test.ts`
 
 **Interfaces:**
-- Produces: `const msg` — an object of functions returning formatted strings for the core commands (e.g. `notInGang()`, `created(name, id)`, `invited(target, gang)`, `noPermission(node)`, `usage(text)`, `joined(gang)`, `left(name)`, `kicked(name)`, `disbandWarning()`, `memberLine(name, rankName)`). Strings prefixed with the configured chat tag; colors via `@s2script/sdk/chat` `ChatColors` if available, else plain.
+- Produces: `interface Messages` and `makeMessages(tag: string): Messages` — an object of functions returning formatted strings for the core commands (e.g. `notInGang()`, `created(name, id)`, `invited(target, gang)`, `noPermission(node)`, `usage(text)`, `joined(gang)`, `left(name)`, `kicked(name)`, `disbandWarning()`, `memberLine(name, rankName)`). Strings prefixed with the configured chat tag; plain text for now (color tokens can be layered later).
 
 - [ ] **Step 1: Write the failing test.** Create `test/messages.test.ts`:
 ```ts
@@ -1782,7 +1914,7 @@ git commit -m "feat: self-contained messages module"
 - Test: `test/commands/handlers.test.ts`
 
 **Interfaces:**
-- Consumes: `GangsApi` (Task 14), `Messages` (Task 15), `Perm` (Task 2), invitation helpers (Task 3), `DoorPolicy`/`DeleteStrat` (Task 1).
+- Consumes: `GangsApi` (Task 14) — handlers route ALL membership changes through `api.members.*` and ALL invite changes through `api.invites.*` (never raw `players.update` / `stats.*`), so lifecycle events fire; `Messages` (Task 15), `Perm` (Task 2), `DoorPolicy` (Task 1).
 - Produces:
   - `interface OnlinePlayer { steam: string; name: string }`
   - `interface CmdCtx { steam: string | null; args: string[]; reply(msg: string): void; api: GangsApi; msg: Messages; online(query: string): OnlinePlayer[]; nowSec: number }`
@@ -1861,6 +1993,18 @@ describe("command handlers", () => {
     await dispatch(h.ctx("owner", ["Bob"]), "kick");
     expect((await h.api.players.get("bob"))?.gangId).toBeNull();
   });
+
+  it("a lower-ranked member cannot demote the owner", async () => {
+    const h = await harness();
+    h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
+    await dispatch(h.ctx("owner", ["Wolves"]), "create");
+    await dispatch(h.ctx("owner", ["Bob"]), "invite");
+    await dispatch(h.ctx("bob", ["Wolves"]), "join");   // bob = Member (100)
+    await dispatch(h.ctx("owner", ["bob"]), "promote");  // 100 -> 50 Officer
+    await dispatch(h.ctx("owner", ["bob"]), "promote");  // 50 -> 30 Manager (has DEMOTE_OTHERS)
+    await dispatch(h.ctx("bob", ["owner"]), "demote");   // bob tries to demote the owner
+    expect((await h.api.players.get("owner"))?.gangRank).toBe(0); // still owner
+  });
 });
 ```
 
@@ -1890,11 +2034,7 @@ import type { CmdCtx } from "./ctx";
 export type { CmdCtx, OnlinePlayer } from "./ctx";
 import type { StatDescriptor } from "../db/instance.repo";
 import { Perm } from "../domain/perm";
-import { DoorPolicy, DeleteStrat } from "../domain/types";
-import {
-  emptyInvitation, addInvitation, removeInvitation, invitedList,
-  addPending, removePending, pendingList, type InvitationData, type PendingInvitationData,
-} from "../domain/invitation";
+import { DoorPolicy } from "../domain/types";
 
 export const INVITATION_STAT: StatDescriptor = {
   id: "gang_invitation", scope: "gang", kind: "record",
@@ -1941,28 +2081,22 @@ async function cmdInvite(ctx: CmdCtx): Promise<void> {
   const matches = ctx.online(query);
   if (matches.length !== 1) { ctx.reply(ctx.msg.playerNotFound(query)); return; }
   const target = matches[0];
-  const data = (await ctx.api.stats.getForGang<InvitationData>(me.gangId, "gang_invitation"))
-    ?? emptyInvitation();
-  await ctx.api.stats.setForGang(me.gangId, "gang_invitation",
-    addInvitation(data, me.steam, target.steam, ctx.nowSec));
-  const pending = (await ctx.api.stats.getForPlayer<PendingInvitationData>(target.steam, "pending_invitation"))
-    ?? { InvitingGangs: "" };
-  await ctx.api.stats.setForPlayer(target.steam, "pending_invitation", addPending(pending, me.gangId));
+  const targetPlayer = await ctx.api.players.get(target.steam, false);
+  if (targetPlayer?.gangId != null) { ctx.reply(`${target.name} is already in a gang.`); return; }
+  await ctx.api.invites.create(me.gangId, me.steam, target.steam, ctx.nowSec);
   const gang = await ctx.api.gangs.get(me.gangId);
   ctx.reply(ctx.msg.invited(target.name, gang?.name ?? String(me.gangId)));
 }
 
 async function cmdInvites(ctx: CmdCtx): Promise<void> {
   const me = await requireGang(ctx); if (!me) return;
-  const data = await ctx.api.stats.getForGang<InvitationData>(me.gangId, "gang_invitation");
-  const list = data ? invitedList(data) : [];
+  const list = await ctx.api.invites.outgoing(me.gangId);
   ctx.reply(list.length ? `Outgoing invites: ${list.join(", ")}` : "Your gang has not invited anyone.");
 }
 
 async function cmdPending(ctx: CmdCtx): Promise<void> {
   if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
-  const pending = await ctx.api.stats.getForPlayer<PendingInvitationData>(ctx.steam, "pending_invitation");
-  const gangs = pending ? pendingList(pending) : [];
+  const gangs = await ctx.api.invites.pending(ctx.steam);
   if (!gangs.length) { ctx.reply("You have no pending invites."); return; }
   const names: string[] = [];
   for (const id of gangs) names.push((await ctx.api.gangs.get(id))?.name ?? `#${id}`);
@@ -1986,19 +2120,15 @@ async function cmdJoin(ctx: CmdCtx): Promise<void> {
   if (gangId === null) { ctx.reply("Could not find that gang."); return; }
 
   const policy = (await ctx.api.stats.getForGang<number>(gangId, "gang_door_policy")) ?? DoorPolicy.REQUEST_ONLY;
-  const invite = await ctx.api.stats.getForGang<InvitationData>(gangId, "gang_invitation");
-  const invited = invite ? invitedList(invite).includes(ctx.steam) : false;
+  const invited = (await ctx.api.invites.outgoing(gangId)).includes(ctx.steam);
+  // v0.1: OPEN lets anyone in; every other policy requires an invite (request-to-join is deferred).
   if (policy !== DoorPolicy.OPEN && !invited) { ctx.reply("You need an invite to join this gang."); return; }
 
   await ctx.api.players.create(ctx.steam, ctx.online(ctx.steam)[0]?.name ?? null);
   const joinRank = await ctx.api.ranks.getJoinRank(gangId);
-  const fresh = await ctx.api.players.get(ctx.steam);
-  if (!fresh || !joinRank) { ctx.reply("Failed to join."); return; }
-  await ctx.api.players.update({ ...fresh, gangId, gangRank: joinRank.rank });
-
-  if (invite) await ctx.api.stats.setForGang(gangId, "gang_invitation", removeInvitation(invite, ctx.steam));
-  const pending = await ctx.api.stats.getForPlayer<PendingInvitationData>(ctx.steam, "pending_invitation");
-  if (pending) await ctx.api.stats.setForPlayer(ctx.steam, "pending_invitation", removePending(pending, gangId));
+  if (!joinRank) { ctx.reply("Failed to join."); return; }
+  await ctx.api.members.add(gangId, ctx.steam, joinRank.rank);
+  if (invited) await ctx.api.invites.revoke(gangId, ctx.steam);
   const gang = await ctx.api.gangs.get(gangId);
   ctx.reply(ctx.msg.joined(gang?.name ?? String(gangId)));
 }
@@ -2006,8 +2136,8 @@ async function cmdJoin(ctx: CmdCtx): Promise<void> {
 async function cmdLeave(ctx: CmdCtx): Promise<void> {
   const me = await requireGang(ctx); if (!me) return;
   if (me.rank === 0) { ctx.reply("Owners must transfer or disband, not leave."); return; }
-  const p = await ctx.api.players.get(me.steam);
-  if (p) await ctx.api.players.update({ ...p, gangId: null, gangRank: null });
+  const p = await ctx.api.players.get(me.steam, false);
+  await ctx.api.members.remove(me.steam, "leave");
   ctx.reply(ctx.msg.left(p?.name ?? me.steam));
 }
 
@@ -2017,7 +2147,7 @@ async function cmdKick(ctx: CmdCtx): Promise<void> {
   const target = await ctx.api.players.findInGang(me.gangId, ctx.args.join(" "));
   if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return; }
   if (target.gangRank <= me.rank) { ctx.reply("You cannot kick someone of equal or higher rank."); return; }
-  await ctx.api.players.update({ ...target, gangId: null, gangRank: null });
+  await ctx.api.members.remove(target.steam, "kick");
   ctx.reply(ctx.msg.kicked(target.name ?? target.steam));
 }
 
@@ -2027,13 +2157,14 @@ async function changeRank(ctx: CmdCtx, dir: "promote" | "demote"): Promise<void>
   if (!(await gate(ctx, me.steam, perm, dir === "promote" ? "Promote Others" : "Demote Others"))) return;
   const target = await ctx.api.players.findInGang(me.gangId, ctx.args.join(" "));
   if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return; }
+  if (target.gangRank <= me.rank) { ctx.reply("You cannot change the rank of someone equal or above you."); return; }
   const ranks = await ctx.api.ranks.getAll(me.gangId);
   const sorted = ranks.map((r) => r.rank).sort((a, b) => a - b);
   const idx = sorted.indexOf(target.gangRank);
   const nextRank = dir === "promote" ? sorted[idx - 1] : sorted[idx + 1];
   if (nextRank === undefined) { ctx.reply("No rank to move to."); return; }
   if (dir === "promote" && nextRank <= me.rank) { ctx.reply("You cannot promote above yourself."); return; }
-  await ctx.api.players.update({ ...target, gangRank: nextRank });
+  await ctx.api.members.setRank(target.steam, nextRank);
   const rankObj = ranks.find((r) => r.rank === nextRank)!;
   ctx.reply(dir === "promote"
     ? ctx.msg.promoted(target.name ?? target.steam, rankObj.name)
@@ -2048,9 +2179,8 @@ async function cmdTransfer(ctx: CmdCtx): Promise<void> {
     ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return;
   }
   const joinRank = await ctx.api.ranks.getJoinRank(me.gangId);
-  const oldOwner = await ctx.api.players.get(me.steam);
-  await ctx.api.players.update({ ...target, gangRank: 0 });
-  if (oldOwner) await ctx.api.players.update({ ...oldOwner, gangRank: joinRank?.rank ?? me.rank });
+  await ctx.api.members.setRank(target.steam, 0);
+  await ctx.api.members.setRank(me.steam, joinRank?.rank ?? me.rank);
   ctx.reply(`Transferred ownership to ${target.name ?? target.steam}.`);
 }
 
@@ -2177,7 +2307,12 @@ export function runGangCommand(api: GangsApi, msg: Messages, cmd: CommandInvocat
     steam, args, reply: (m) => cmd.reply(m), api, msg, online,
     nowSec: Math.floor(Date.now() / 1000),
   };
-  void dispatch(ctx, sub);
+  // Design §7: wrap the command path so a thrown invariant/DB error replies + logs, never an
+  // unhandled rejection. CommandInvocation is documented safe to reply after an await.
+  dispatch(ctx, sub).catch((e) => {
+    cmd.reply("An error occurred while running that command.");
+    console.log("[gangs] command error:", e);
+  });
 }
 ```
 > Note: `Date.now()` is available in the plugin runtime (it is only restricted inside Workflow scripts). Handlers stay pure by receiving `nowSec` through `CmdCtx`.
@@ -2188,7 +2323,6 @@ import { plugin } from "@s2script/sdk/plugin";
 import { Database } from "@s2script/sdk/db";
 import { config } from "@s2script/sdk/config";
 import type { GangsApi } from "../api";
-import type { Db } from "./db/db";
 import { ensureCoreTables } from "./db/schema";
 import { GangsRepo } from "./db/gangs.repo";
 import { PlayersRepo } from "./db/players.repo";
@@ -2209,7 +2343,7 @@ export default plugin(async (ctx) => {
   const connName = config.getString("db_connection") || "default";
   const tag = config.getString("chat_tag") || "Gangs>";
 
-  const db: Db = await Database.open(connName);
+  const db = await Database.open(connName); // real Database; structurally satisfies the repos' `Db`
   await ensureCoreTables(db, prefix);
 
   const players = new PlayerManager(new PlayersRepo(db, prefix));
@@ -2232,8 +2366,13 @@ export default plugin(async (ctx) => {
 
   handle = ctx.publish<GangsApi>("@gangs/api", api);
 
-  const msg = makeMessages(tag);
+  let msg = makeMessages(tag);
   ctx.commands.register("gang", (cmd) => runGangCommand(api, msg, cmd));
+
+  // Live-reload the chat tag (design §7); the command closure reads `msg` by reference.
+  ctx.config.onChange(() => { msg = makeMessages(config.getString("chat_tag") || "Gangs>"); });
+
+  return { onUnload: () => { void db.close(); } };
 });
 ```
 
@@ -2257,6 +2396,12 @@ git commit -m "feat: wire plugin, publish @gangs/api, register /gang command"
   7. `/gang doorpolicy open` then a fresh client `/gang join Testers` without an invite succeeds.
   8. `/gang disband` warns; `/gang disband confirm` deletes the gang.
   9. Re-drop the `.s2sp` (hot reload); confirm gangs persist (data is in SQLite).
+  10. **Consumer/boundary check (verifies the core "other plugins can consume this" deliverable):**
+      build a throwaway consumer plugin with `pluginDependencies: { "@gangs/api": "^0.1.0" }` whose
+      factory does `const g = ctx.use<GangsApi>("@gangs/api"); g.on("gang_created", (e) => console.log("[consumer] created", e.gangId)); ctx.commands.register("gangapitest", async () => console.log("[consumer] gangs:", (await g.gangs.getAll()).length));`.
+      Load it, run `/gang create X` (expect the consumer's `gang_created` log), then `gangapitest`
+      (expect the count log). If the nested call returns `undefined`/throws, apply the flatten
+      fallback from Task 14 and re-test. Record the outcome — this is the acceptance gate for the API.
 
 ---
 
@@ -2266,4 +2411,19 @@ git commit -m "feat: wire plugin, publish @gangs/api, register /gang command"
 - **SteamID fidelity** enforced in Task 6 (`CAST(Steam AS TEXT)`, string round-trip test) and used as string everywhere downstream.
 - **Boundary/DTO rule** honored: API returns plain objects; events carry plain payloads.
 - **Type consistency:** manager method names referenced by `buildGangsApi` (Task 14) match their definitions (Tasks 9–12); stat descriptor ids in handlers (Task 16) match those registered in `plugin.ts` (Task 17).
-- **Known verification points** (flagged inline, resolved at build): `api.d.ts` re-export acceptance by `s2s build`; exact location of the `types` manifest key. Both have inline fallbacks.
+- **Known verification points** (flagged inline, resolved at build): `api.d.ts` re-export acceptance by `s2s build`; exact location of the `types` manifest key; the nested-namespace publish boundary (Task 17 Step 7 item 10). All have inline fallbacks.
+
+### Fable review — resolutions (2026-07-23)
+
+Blocking issues from the plan review, all fixed inline:
+1. **Dead events (5 of 8 never emitted)** → added the `members` (`add`/`remove`/`setRank`) and `invites` (`create`/`revoke`/`outgoing`/`pending`) namespaces to `GangsApi`; every one emits its event, `gangs.delete` emits `member_left(disband)×N` + `gang_deleted`; handlers (Task 16) route through them; Task 14 tests assert emissions.
+2. **`demote` privilege bug** → `changeRank` now refuses when `target.gangRank <= me.rank`; Task 16 has a demote-the-owner test.
+3. **`createGang` threw on "already in a gang"** → returns `null` (design §7); Produces line fixed.
+4. **No error wrapping on command path** → `runGangCommand` wraps `dispatch(...).catch(...)` with a reply + `console.log`.
+5. **`REQUEST_ONLY` dead end** → v0.1 treats `REQUEST_ONLY`/`INVITE_ONLY` alike (invite required), `OPEN` free; request-to-join deferred; spec §6 amended.
+6. **Unproven nested publish** → Task 17 Step 7 item 10 adds a consumer smoke test as the API acceptance gate, with a documented flatten fallback.
+7. **`.at()` breaks ES2020** → `src` uses index arithmetic; a Global Constraint forbids ES2022+ APIs in `src`.
+
+Non-blocking fixes applied: exact-match `findPlayerInGang` (#1); `remove`-on-cold-store + SQL-identifier-injection tests for `StatStore` (#2, #13); `OWNER`-bit guard in `addRank` (#3); unused-import cleanup (#9); Task 15 Interfaces wording (#10); `Member` permission bitfield pinned in a test (#12); `onUnload → db.close()` and live `chat_tag` reload (#7, #8).
+
+Deferred (tracked, not v0.1): `MaxAmo` cap + duplicate-invite dedupe (#4), a `/gang invite revoke` command (#5), exposing `Perm` runtime values through the API (#6), async `stats.register` (#14).
