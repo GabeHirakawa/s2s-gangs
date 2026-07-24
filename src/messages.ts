@@ -16,6 +16,12 @@ export interface Messages {
   disbandWarning(): string;
   disbanded(name: string): string;
   playerNotFound(query: string): string;
+  balance(amount: number): string;
+  gangBalance(gang: string, amount: number): string;
+  deposited(amount: number): string;
+  noCredits(): string;
+  cannotAfford(missing: number): string;
+  credited(name: string, balance: number): string;
 }
 
 export function makeMessages(tag: string): Messages {
@@ -37,5 +43,11 @@ export function makeMessages(tag: string): Messages {
       p("WARNING: This is irreversible. Type !gang_disband confirm to confirm."),
     disbanded: (name) => p(`${name} disbanded the gang.`),
     playerNotFound: (query) => p(`Could not find a player using "${query}".`),
+    balance: (amount) => p(`You have ${amount} credits.`),
+    gangBalance: (gang, amount) => p(`${gang}'s bank has ${amount} credits.`),
+    deposited: (amount) => p(`Deposited ${amount} credits into the gang bank.`),
+    noCredits: () => p("You have no credits."),
+    cannotAfford: (missing) => p(`You are ${missing} credits short.`),
+    credited: (name, balance) => p(`${name} now has ${balance} credits.`),
   };
 }

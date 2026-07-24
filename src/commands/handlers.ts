@@ -190,6 +190,33 @@ async function cmdInfo(ctx: CmdCtx): Promise<void> {
   ctx.reply(`${membership.gang.name} — your rank: ${membership.rank.name} — members: ${count}`);
 }
 
+async function cmdBalance(ctx: CmdCtx): Promise<void> {
+  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
+  ctx.reply(ctx.msg.balance(await ctx.api.eco.getBalance(ctx.steam, true)));
+  const membership = await ctx.api.players.getMembership(ctx.steam);
+  if (membership) ctx.reply(ctx.msg.gangBalance(membership.gang.name, await ctx.api.eco.getGangBalance(membership.gang.gangId)));
+}
+
+async function cmdDeposit(ctx: CmdCtx): Promise<void> {
+  const me = await requireGang(ctx); if (!me) return;
+  if (!(await gate(ctx, me.steam, Perm.BANK_DEPOSIT, "Deposit Money"))) return;
+  const raw = (ctx.args[0] ?? "").toLowerCase();
+  let amount: number;
+  if (raw === "all") {
+    amount = await ctx.api.eco.getBalance(me.steam, true);
+    if (amount <= 0) { ctx.reply(ctx.msg.noCredits()); return; }
+  } else {
+    amount = parseInt(raw, 10);
+    if (!Number.isInteger(amount) || String(amount) !== raw.replace(/^\+/, "") || amount <= 0) {
+      ctx.reply(ctx.msg.usage("!gang_deposit <amount|all>")); return;
+    }
+  }
+  const remaining = await ctx.api.eco.tryPurchase(me.steam, amount, { excludeGangCredits: true });
+  if (remaining < 0) { ctx.reply(ctx.msg.cannotAfford(Math.abs(remaining))); return; }
+  await ctx.api.eco.grantGang(me.gangId, amount, "deposit");
+  ctx.reply(ctx.msg.deposited(amount));
+}
+
 function cmdHelp(ctx: CmdCtx): Promise<void> {
   // Derived from COMMANDS: "!gang_create, !gang_invite, …" (the bare !gang omitted).
   const names = COMMANDS.map((c) => "!" + c.name.slice("sm_".length))
@@ -220,6 +247,8 @@ export const COMMANDS: GangCommand[] = [
   { name: "sm_gang_members", run: cmdMembers },
   { name: "sm_gang_doorpolicy", run: cmdDoorPolicy },
   { name: "sm_gang_disband", run: cmdDisband },
+  { name: "sm_gang_balance", run: cmdBalance },
+  { name: "sm_gang_deposit", run: cmdDeposit },
   { name: "sm_gang_help", run: cmdHelp },
 ];
 
