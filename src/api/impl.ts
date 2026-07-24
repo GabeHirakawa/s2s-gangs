@@ -11,6 +11,9 @@ import {
   type InvitationData, type PendingInvitationData,
 } from "../domain/invitation";
 import { EcoManager } from "../eco/eco-manager";
+import { Perm } from "../domain/perm";
+import { PerkRegistry } from "../perks/perk-registry";
+import { ALL_PERKS } from "../perks/perk";
 
 const INVITATION = "gang_invitation";
 const PENDING = "pending_invitation";
@@ -24,6 +27,8 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
     player: (steam, balance, delta, reason) => emit("player_credits_changed", { steam, balance, delta, reason }),
     gang: (gangId, balance, delta, reason) => emit("gang_credits_changed", { gangId, balance, delta, reason }),
   });
+  const perks = new PerkRegistry();
+  for (const p of ALL_PERKS) { perks.register(p); m.stats.register(p.descriptor); }
   return {
     gangs: {
       getAll: () => m.gangs.getGangs(),
@@ -156,6 +161,30 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
       tryPurchase: (steam, cost, opts) => eco.tryPurchase(steam, cost, opts?.excludeGangCredits ?? false),
       grantPlayer: (steam, amount, reason) => eco.grantPlayer(steam, amount, reason ?? null),
       grantGang: (gangId, amount, reason) => eco.grantGang(gangId, amount, reason ?? null),
+    },
+    perks: {
+      list: () => perks.list(),
+      getCost: (gangId, perkId) => {
+        const p = perks.get(perkId);
+        return p ? p.getCost(m.stats, gangId) : Promise.resolve(null);
+      },
+      async getCapacity(gangId) {
+        const c = (await m.stats.getForGang<number>(gangId, "gang_native_capacity")) ?? 1;
+        return c < 1 ? 1 : c;
+      },
+      async purchase(steam, perkId) {
+        const player = await m.players.getPlayer(steam, false);
+        if (!player || player.gangId === null) return { ok: false, reason: "not_in_gang" };
+        const perk = perks.get(perkId);
+        if (!perk) return { ok: false, reason: "unknown_perk" };
+        if (!(await m.ranks.checkRank(player, Perm.PURCHASE_PERKS)).ok) return { ok: false, reason: "no_permission" };
+        const cost = await perk.getCost(m.stats, player.gangId);
+        if (cost === null) return { ok: false, reason: "unpurchasable" };
+        const remaining = await eco.tryPurchase(steam, cost); // bank-first
+        if (remaining < 0) return { ok: false, reason: "insufficient_funds", cost };
+        await perk.onPurchase(m.stats, player.gangId);
+        return { ok: true, reason: "ok", cost, balance: remaining };
+      },
     },
   };
 }

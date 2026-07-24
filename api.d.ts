@@ -72,4 +72,17 @@ export interface GangsApi {
     grantPlayer(steam: string, amount: number, reason?: string): Promise<number>;
     grantGang(gangId: number, amount: number, reason?: string): Promise<number>;
   };
+  perks: {
+    list(): { id: string; name: string; description: string }[];
+    getCost(gangId: number, perkId: string): Promise<number | null>;
+    getCapacity(gangId: number): Promise<number>;
+    purchase(steam: string, perkId: string): Promise<PurchaseResult>;
+  };
 }
+
+export type PurchaseResult = {
+  ok: boolean;
+  reason: "ok" | "unknown_perk" | "not_in_gang" | "no_permission" | "unpurchasable" | "insufficient_funds";
+  cost?: number;
+  balance?: number;
+};
