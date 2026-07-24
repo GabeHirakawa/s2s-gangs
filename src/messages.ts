@@ -22,6 +22,7 @@ export interface Messages {
   noCredits(): string;
   cannotAfford(missing: number): string;
   credited(name: string, balance: number): string;
+  gangChat(gang: string, name: string, message: string): string;
 }
 
 export function makeMessages(tag: string): Messages {
@@ -49,5 +50,7 @@ export function makeMessages(tag: string): Messages {
     noCredits: () => p("You have no credits."),
     cannotAfford: (missing) => p(`You are ${missing} credits short.`),
     credited: (name, balance) => p(`${name} now has ${balance} credits.`),
+    // Gang chat lines are their own format (no p(tag) prefix) — they are gang-scoped chat, not plugin notices.
+    gangChat: (gang, name, message) => `[${gang}] ${name}: ${message}`,
   };
 }

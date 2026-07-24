@@ -101,8 +101,14 @@ SDK-free and unit-tested. Only `gang-chat.ts` and the plugin wiring touch the SD
   owned → "purchase MOTD first". Capacity at max → `getCost` null → "already at max".
 - Join gate: a full gang replies "gang is full" and does not add the member (checked before
   `members.add`).
-- Gang chat: a `.` message from a non-member, a gang without the perk, or a member lacking
-  `SEND_GANG_CHAT` falls through as normal chat (hook returns continue).
+- Gang chat: eligibility (membership, perk-owned, `SEND_GANG_CHAT`) is DB-backed and can only be
+  resolved async, while `onSay` must answer synchronously whether to suppress the line. Every
+  syntactically-valid `.` message from a real (non-bot) client is therefore suppressed up front and
+  eligibility is resolved after; a `.` message from a non-member, a gang without the perk, or a member
+  lacking `SEND_GANG_CHAT` is **suppressed but not broadcast** (swallowed), not passed through as normal
+  chat. (A synchronous eligibility cache, refreshed on membership/perk/rank changes, would let ineligible
+  `.` messages fall through as normal chat instead — deferred as a follow-on, not required for this
+  sub-project.)
 
 ## Testing
 

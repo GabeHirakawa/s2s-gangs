@@ -18,6 +18,7 @@ import { makeMessages } from "./messages";
 import { registerGangCommands, registerMenuCommand, runCreditsCommand } from "./commands/gang";
 import { INVITATION_STAT, PENDING_STAT, DOOR_POLICY_STAT } from "./commands/handlers";
 import { GANG_BALANCE_STAT, PLAYER_BALANCE_STAT } from "./eco/balance";
+import { registerGangChat } from "./perks/gang-chat";
 
 export default plugin(async (ctx) => {
   const prefix = config.getString("table_prefix") || "gang";
@@ -53,6 +54,7 @@ export default plugin(async (ctx) => {
   registerGangCommands(ctx.commands, api, () => msg);
   registerMenuCommand(ctx.commands, api, () => msg);
   ctx.commands.registerAdmin("sm_credits", ADMFLAG.ROOT, (cmd) => runCreditsCommand(api, cmd));
+  registerGangChat(ctx, api, () => msg);
 
   // Live-reload the chat tag (design §7); the command closure reads `msg` by reference.
   ctx.config.onChange(() => { msg = makeMessages(config.getString("chat_tag") || "Gangs>"); });
