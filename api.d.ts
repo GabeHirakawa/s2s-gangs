@@ -63,4 +63,12 @@ export interface GangsApi {
     setForPlayer<T>(steam: string, statId: string, value: T): Promise<boolean>;
     removeFromPlayer(steam: string, statId: string): Promise<boolean>;
   };
+  eco: {
+    getBalance(steam: string, excludeGangCredits?: boolean): Promise<number>;
+    getGangBalance(gangId: number): Promise<number>;
+    canAfford(steam: string, cost: number, excludeGangCredits?: boolean): Promise<boolean>;
+    tryPurchase(steam: string, cost: number, opts?: { excludeGangCredits?: boolean }): Promise<number>;
+    grantPlayer(steam: string, amount: number, reason?: string): Promise<number>;
+    grantGang(gangId: number, amount: number, reason?: string): Promise<number>;
+  };
 }

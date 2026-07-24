@@ -10,6 +10,7 @@ import {
   addPending, removePending, pendingList,
   type InvitationData, type PendingInvitationData,
 } from "../domain/invitation";
+import { EcoManager } from "../eco/eco-manager";
 
 const INVITATION = "gang_invitation";
 const PENDING = "pending_invitation";
@@ -19,6 +20,10 @@ export interface Managers {
 }
 
 export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
+  const eco = new EcoManager(m.stats, m.players, m.ranks, {
+    player: (steam, balance, delta, reason) => emit("player_credits_changed", { steam, balance, delta, reason }),
+    gang: (gangId, balance, delta, reason) => emit("gang_credits_changed", { gangId, balance, delta, reason }),
+  });
   return {
     gangs: {
       getAll: () => m.gangs.getGangs(),
@@ -137,6 +142,14 @@ export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
       getForPlayer: (steam, statId) => m.stats.getForPlayer(steam, statId),
       setForPlayer: (steam, statId, value) => m.stats.setForPlayer(steam, statId, value),
       removeFromPlayer: (steam, statId) => m.stats.removeFromPlayer(steam, statId),
+    },
+    eco: {
+      getBalance: (steam, excludeGangCredits) => eco.getBalance(steam, excludeGangCredits),
+      getGangBalance: (gangId) => eco.getGangBalance(gangId),
+      canAfford: (steam, cost, excludeGangCredits) => eco.canAfford(steam, cost, excludeGangCredits),
+      tryPurchase: (steam, cost, opts) => eco.tryPurchase(steam, cost, opts?.excludeGangCredits ?? false),
+      grantPlayer: (steam, amount, reason) => eco.grantPlayer(steam, amount, reason ?? null),
+      grantGang: (gangId, amount, reason) => eco.grantGang(gangId, amount, reason ?? null),
     },
   };
 }
