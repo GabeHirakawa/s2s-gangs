@@ -20,7 +20,10 @@ export async function mainMenuModel(api: GangsApi, viewerSteam: string): Promise
     items.push({ info: "nav:ranks", label: "Ranks" });
     items.push({ info: "nav:door", label: "Door Policy" });
   }
-  return { title: gang ? `Gang: ${gang.name}` : "Gang", items };
+  if (v && hasPerm(v.perms, Perm.PURCHASE_PERKS)) items.push({ info: "nav:perks", label: "Perks" });
+  const motd = v ? await api.stats.getForGang<string>(v.gangId, "gang_native_motd") : null;
+  const title = gang ? `Gang: ${gang.name}${motd ? ` — ${motd}` : ""}` : "Gang";
+  return { title, items };
 }
 
 export async function membersMenuModel(api: GangsApi, gangId: number): Promise<MenuModel> {
@@ -59,4 +62,13 @@ export function doorPolicyModel(): MenuModel {
       { info: "door:request", label: "Request Only" },
     ],
   };
+}
+
+export async function perksMenuModel(api: GangsApi, gangId: number): Promise<MenuModel> {
+  const items: MenuItem[] = [];
+  for (const p of api.perks.list()) {
+    const cost = await api.perks.getCost(gangId, p.id);
+    items.push({ info: `perk:${p.id}`, label: `${p.name}: ${cost === null ? "owned/max" : `${cost}cr`}`, disabled: cost === null });
+  }
+  return { title: "Perks", items };
 }

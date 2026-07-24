@@ -63,4 +63,14 @@ describe("menu-router", () => {
     expect(next?.title).toBe("Ranks");
     expect(calls).toEqual([]);
   });
+  it("routes perk:<id> through sm_gang_purchase and returns to the perks menu", async () => {
+    const { a, players } = await api();
+    await players.createPlayer("owner", "O");
+    await a.gangs.create("G", "owner");
+    const calls: Array<[string, string[]]> = [];
+    const rctx = { api: a, viewerSteam: "owner", run: async (c: string, args: string[]) => { calls.push([c, args]); } };
+    const next = await route("perk:gang_native_capacity", rctx);
+    expect(calls).toContainEqual(["sm_gang_purchase", ["gang_native_capacity"]]);
+    expect(next?.title.toLowerCase()).toContain("perk");
+  });
 });

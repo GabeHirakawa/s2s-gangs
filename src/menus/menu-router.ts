@@ -1,6 +1,6 @@
 import type { GangsApi } from "../../api";
 import {
-  type MenuModel, mainMenuModel, membersMenuModel, memberActionsModel, ranksMenuModel, doorPolicyModel,
+  type MenuModel, mainMenuModel, membersMenuModel, memberActionsModel, ranksMenuModel, doorPolicyModel, perksMenuModel,
 } from "./menu-model";
 
 export interface RouterCtx {
@@ -48,6 +48,13 @@ export async function route(info: string, rctx: RouterCtx): Promise<MenuModel | 
   if (info.startsWith("door:")) {
     await rctx.run("sm_gang_doorpolicy", [info.slice("door:".length)]);
     return mainMenuModel(rctx.api, rctx.viewerSteam);
+  }
+  if (info === "nav:perks") {
+    const g = await gangIdOf(rctx); return g === null ? null : perksMenuModel(rctx.api, g);
+  }
+  if (info.startsWith("perk:")) {
+    await rctx.run("sm_gang_purchase", [info.slice("perk:".length)]);
+    const g = await gangIdOf(rctx); return g === null ? null : perksMenuModel(rctx.api, g);
   }
   return null; // unknown / close
 }

@@ -81,6 +81,7 @@ describe("rank administration commands", () => {
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     const gang = await h.api.gangs.getByMember("owner");
+    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
     // Promote bob to Manager (rank 30): has MANAGE_RANKS but not CREATE_RANKS.
     await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));   // Member (100)
@@ -101,6 +102,7 @@ describe("rank administration commands", () => {
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     const gang = await h.api.gangs.getByMember("owner");
+    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
     await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));   // Member (100)
     await runCommand("sm_gang_promote", h.ctx("owner", ["bob"])); // 100 -> 50 Officer

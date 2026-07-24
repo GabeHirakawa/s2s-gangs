@@ -50,6 +50,7 @@ describe("command handlers", () => {
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     const gang = await h.api.gangs.getByMember("owner");
+    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
     await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     // bob sees pending, joins by gang name
     await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));
@@ -61,6 +62,8 @@ describe("command handlers", () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    const gang = await h.api.gangs.getByMember("owner");
+    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
     await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));
     await runCommand("sm_gang_kick", h.ctx("owner", ["Bob"]));
@@ -71,11 +74,25 @@ describe("command handlers", () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    const gang = await h.api.gangs.getByMember("owner");
+    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
     await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));   // bob = Member (100)
     await runCommand("sm_gang_promote", h.ctx("owner", ["bob"]));  // 100 -> 50 Officer
     await runCommand("sm_gang_promote", h.ctx("owner", ["bob"]));  // 50 -> 30 Manager (has DEMOTE_OTHERS)
     await runCommand("sm_gang_demote", h.ctx("bob", ["owner"]));   // bob tries to demote the owner
     expect((await h.api.players.get("owner"))?.gangRank).toBe(0); // still owner
+  });
+
+  it("join is refused when the gang is at capacity", async () => {
+    const h = await harness();
+    h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    // default capacity is 1 (owner already fills it)
+    await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
+    h.replies.length = 0;
+    await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));
+    expect(h.replies.join("\n").toLowerCase()).toContain("full");
+    expect((await h.api.players.get("bob"))?.gangId).toBeNull();
   });
 });

@@ -11,7 +11,7 @@ import { GangManager } from "../../src/managers/gang-manager";
 import { StatManager } from "../../src/managers/stat-manager";
 import { buildGangsApi } from "../../src/api/impl";
 import type { GangEvents } from "../../src/api/events";
-import { mainMenuModel, membersMenuModel, memberActionsModel, doorPolicyModel } from "../../src/menus/menu-model";
+import { mainMenuModel, membersMenuModel, memberActionsModel, doorPolicyModel, perksMenuModel } from "../../src/menus/menu-model";
 
 async function api() {
   const db = makeTestDb();
@@ -66,5 +66,19 @@ describe("menu-model", () => {
     expect(model.title).toBe("Members");
     expect(model.items.some((i) => i.info === "member:owner")).toBe(true);
     expect(model.items.some((i) => i.info === "member:m")).toBe(true);
+  });
+  it("main menu shows Perks for a viewer with PURCHASE_PERKS", async () => {
+    const { a, players } = await api();
+    await players.createPlayer("owner", "O");
+    await a.gangs.create("G", "owner");
+    const model = await mainMenuModel(a, "owner");
+    expect(model.items.some((i) => i.info === "nav:perks")).toBe(true);
+  });
+  it("perks menu lists perks with perk:<id> info keys", async () => {
+    const { a, players } = await api();
+    await players.createPlayer("owner", "O");
+    await a.gangs.create("G", "owner");
+    const model = await perksMenuModel(a, 1);
+    expect(model.items.some((i) => i.info === "perk:gang_native_capacity")).toBe(true);
   });
 });

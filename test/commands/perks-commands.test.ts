@@ -38,57 +38,36 @@ async function harness() {
   return { api, online, replies, ctx, players };
 }
 
-describe("eco command handlers", () => {
-  it("deposit moves personal credits into the gang bank", async () => {
+describe("perk command handlers", () => {
+  it("purchase buys a perk and reports the new balance", async () => {
+    const h = await harness();
+    h.online.push({ steam: "owner", name: "O" });
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    await h.api.eco.grantPlayer("owner", 100000);
+    h.replies.length = 0;
+    await runCommand("sm_gang_purchase", h.ctx("owner", ["gang_native_capacity"]));
+    const gang = await h.api.gangs.getByMember("owner");
+    expect(await h.api.perks.getCapacity(gang!.gangId)).toBe(2);
+  });
+  it("purchase reports insufficient funds", async () => {
+    const h = await harness();
+    h.online.push({ steam: "owner", name: "O" });
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    h.replies.length = 0;
+    await runCommand("sm_gang_purchase", h.ctx("owner", ["gang_native_capacity"]));
+    expect(h.replies.join("\n").toLowerCase()).toContain("afford");
+  });
+  it("motd requires the perk to be purchased first, then sets it", async () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" });
     await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     const gang = await h.api.gangs.getByMember("owner");
-    await h.api.eco.grantPlayer("owner", 100);
-    await runCommand("sm_gang_deposit", h.ctx("owner", ["40"]));
-    expect(await h.api.eco.getGangBalance(gang!.gangId)).toBe(40);
-    expect(await h.api.eco.getBalance("owner", true)).toBe(60);
-  });
-
-  it("deposit is denied for a rank without BANK_DEPOSIT and writes nothing", async () => {
-    const h = await harness();
-    h.online.push({ steam: "owner", name: "O" }, { steam: "mute", name: "Mute" });
-    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
-    const gang = await h.api.gangs.getByMember("owner");
-    await h.api.stats.setForGang(gang!.gangId, "gang_native_capacity", 15);
-    // a permissionless rank — even the stock Member rank (100) has BANK_DEPOSIT
-    await h.api.ranks.create(gang!.gangId, "Mute", 200, 0);
-    await runCommand("sm_gang_invite", h.ctx("owner", ["Mute"]));
-    await runCommand("sm_gang_join", h.ctx("mute", ["Wolves"]));
-    await h.api.members.setRank("mute", 200);
-    await h.api.eco.grantPlayer("mute", 100);
     h.replies.length = 0;
-    await runCommand("sm_gang_deposit", h.ctx("mute", ["40"]));
-    expect(h.replies.join("\n")).toContain("Deposit Money");
-    expect(await h.api.eco.getGangBalance(gang!.gangId)).toBe(0);
-    expect(await h.api.eco.getBalance("mute", true)).toBe(100);
-  });
-
-  it("deposit rejects a non-numeric amount with a usage reply", async () => {
-    const h = await harness();
-    h.online.push({ steam: "owner", name: "O" });
-    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
-    const gang = await h.api.gangs.getByMember("owner");
-    await h.api.eco.grantPlayer("owner", 100);
-    h.replies.length = 0;
-    await runCommand("sm_gang_deposit", h.ctx("owner", ["40abc"]));
-    expect(h.replies.join("\n").toLowerCase()).toContain("usage");
-    expect(await h.api.eco.getGangBalance(gang!.gangId)).toBe(0);
-    expect(await h.api.eco.getBalance("owner", true)).toBe(100);
-  });
-
-  it("balance reports personal credits", async () => {
-    const h = await harness();
-    h.online.push({ steam: "owner", name: "O" });
-    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
-    await h.api.eco.grantPlayer("owner", 30);
-    h.replies.length = 0;
-    await runCommand("sm_gang_balance", h.ctx("owner", []));
-    expect(h.replies.join("\n")).toContain("30");
+    await runCommand("sm_gang_motd", h.ctx("owner", ["Hello", "world"]));
+    expect(h.replies.join("\n").toLowerCase()).toContain("purchase"); // not owned yet
+    await h.api.eco.grantPlayer("owner", 100000);
+    await runCommand("sm_gang_purchase", h.ctx("owner", ["gang_native_motd"]));
+    await runCommand("sm_gang_motd", h.ctx("owner", ["Hello", "world"]));
+    expect(await h.api.stats.getForGang<string>(gang!.gangId, "gang_native_motd")).toBe("Hello world");
   });
 });

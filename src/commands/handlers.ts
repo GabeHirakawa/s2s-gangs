@@ -4,6 +4,7 @@ import type { StatDescriptor } from "../db/instance.repo";
 import { Perm } from "../domain/perm";
 import { DoorPolicy } from "../domain/types";
 import { cmdRanks, cmdRankCreate, cmdRankRename, cmdRankDelete, cmdRankPerm } from "./ranks";
+import { cmdPerks, cmdPurchase, cmdMotd } from "./perks";
 
 export const INVITATION_STAT: StatDescriptor = {
   id: "gang_invitation", scope: "gang", kind: "record",
@@ -96,6 +97,9 @@ async function cmdJoin(ctx: CmdCtx): Promise<void> {
   await ctx.api.players.create(ctx.steam, ctx.online(ctx.steam)[0]?.name ?? null);
   const joinRank = await ctx.api.ranks.getJoinRank(gangId);
   if (!joinRank) { ctx.reply("Failed to join."); return; }
+  const capacity = await ctx.api.perks.getCapacity(gangId);
+  const count = (await ctx.api.players.getMembers(gangId)).length;
+  if (count >= capacity) { ctx.reply("That gang is full."); return; }
   await ctx.api.members.add(gangId, ctx.steam, joinRank.rank);
   if (invited) await ctx.api.invites.revoke(gangId, ctx.steam);
   const gang = await ctx.api.gangs.get(gangId);
@@ -252,6 +256,9 @@ export const COMMANDS: GangCommand[] = [
   { name: "sm_gang_rank_delete", run: cmdRankDelete },
   { name: "sm_gang_rank_perm", run: cmdRankPerm },
   { name: "sm_gang_doorpolicy", run: cmdDoorPolicy },
+  { name: "sm_gang_perks", run: cmdPerks },
+  { name: "sm_gang_purchase", run: cmdPurchase },
+  { name: "sm_gang_motd", run: cmdMotd },
   { name: "sm_gang_disband", run: cmdDisband },
   { name: "sm_gang_balance", run: cmdBalance },
   { name: "sm_gang_deposit", run: cmdDeposit },
