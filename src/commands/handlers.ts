@@ -34,7 +34,7 @@ async function gate(ctx: CmdCtx, steam: string, perm: number, node: string): Pro
 async function cmdCreate(ctx: CmdCtx): Promise<void> {
   if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
   const name = ctx.args.join(" ").trim();
-  if (!name) { ctx.reply(ctx.msg.usage("/gang create [name]")); return; }
+  if (!name) { ctx.reply(ctx.msg.usage("!gang_create <name>")); return; }
   const existing = await ctx.api.players.get(ctx.steam, false);
   if (existing?.gangId != null) { ctx.reply(ctx.msg.alreadyInGang()); return; }
   await ctx.api.players.create(ctx.steam, ctx.online(ctx.steam)[0]?.name ?? null);
@@ -68,7 +68,7 @@ async function cmdPending(ctx: CmdCtx): Promise<void> {
   if (!gangs.length) { ctx.reply("You have no pending invites."); return; }
   const names: string[] = [];
   for (const id of gangs) names.push((await ctx.api.gangs.get(id))?.name ?? `#${id}`);
-  ctx.reply(`Invited by: ${names.join(", ")}. Use /gang join [name] to accept.`);
+  ctx.reply(`Invited by: ${names.join(", ")}. Use !gang_join <name> to accept.`);
 }
 
 async function resolveGangByName(ctx: CmdCtx, query: string): Promise<number | null> {
@@ -168,7 +168,7 @@ async function cmdDoorPolicy(ctx: CmdCtx): Promise<void> {
     open: DoorPolicy.OPEN, invite: DoorPolicy.INVITE_ONLY, request: DoorPolicy.REQUEST_ONLY,
   };
   const choice = map[(ctx.args[0] ?? "").toLowerCase()];
-  if (choice === undefined) { ctx.reply(ctx.msg.usage("/gang doorpolicy [open|invite|request]")); return; }
+  if (choice === undefined) { ctx.reply(ctx.msg.usage("!gang_doorpolicy <open|invite|request>")); return; }
   await ctx.api.stats.setForGang(me.gangId, "gang_door_policy", choice);
   ctx.reply(`Door policy set to ${ctx.args[0].toLowerCase()}.`);
 }
@@ -191,19 +191,42 @@ async function cmdInfo(ctx: CmdCtx): Promise<void> {
 }
 
 function cmdHelp(ctx: CmdCtx): Promise<void> {
-  const subs = "create, invite, invites, pending, join, leave, kick, promote, demote, transfer, members, doorpolicy, disband";
-  ctx.reply(ctx.msg.usage(`/gang [${subs}]`));
+  // Derived from COMMANDS: "!gang_create, !gang_invite, …" (the bare !gang omitted).
+  const names = COMMANDS.map((c) => "!" + c.name.slice("sm_".length))
+    .filter((n) => n !== "!gang").join(", ");
+  ctx.reply(ctx.msg.usage(names));
   return Promise.resolve();
 }
 
-export const handlers: Record<string, (ctx: CmdCtx) => Promise<void>> = {
-  "": cmdInfo, create: cmdCreate, invite: cmdInvite, invites: cmdInvites, pending: cmdPending,
-  join: cmdJoin, leave: cmdLeave, kick: cmdKick,
-  promote: (ctx) => changeRank(ctx, "promote"), demote: (ctx) => changeRank(ctx, "demote"),
-  transfer: cmdTransfer, members: cmdMembers, doorpolicy: cmdDoorPolicy, disband: cmdDisband, help: cmdHelp,
-};
+/** One registered command. `name` is the engine command (e.g. "sm_gang_create"); chat "!gang_create"
+ *  resolves to it. Each is registered individually — there is no central subcommand dispatcher. */
+export interface GangCommand {
+  name: string;
+  run: (ctx: CmdCtx) => Promise<void>;
+}
 
-export async function dispatch(ctx: CmdCtx, sub: string): Promise<void> {
-  const handler = handlers[sub.toLowerCase()] ?? handlers.help;
-  await handler(ctx);
+export const COMMANDS: GangCommand[] = [
+  { name: "sm_gang", run: cmdInfo },
+  { name: "sm_gang_create", run: cmdCreate },
+  { name: "sm_gang_invite", run: cmdInvite },
+  { name: "sm_gang_invites", run: cmdInvites },
+  { name: "sm_gang_pending", run: cmdPending },
+  { name: "sm_gang_join", run: cmdJoin },
+  { name: "sm_gang_leave", run: cmdLeave },
+  { name: "sm_gang_kick", run: cmdKick },
+  { name: "sm_gang_promote", run: (ctx) => changeRank(ctx, "promote") },
+  { name: "sm_gang_demote", run: (ctx) => changeRank(ctx, "demote") },
+  { name: "sm_gang_transfer", run: cmdTransfer },
+  { name: "sm_gang_members", run: cmdMembers },
+  { name: "sm_gang_doorpolicy", run: cmdDoorPolicy },
+  { name: "sm_gang_disband", run: cmdDisband },
+  { name: "sm_gang_help", run: cmdHelp },
+];
+
+/** Test/utility helper: run a registered command by its full name. The runtime does NOT route through
+ *  this — each command is registered directly with the engine (see registerGangCommands). */
+export function runCommand(name: string, ctx: CmdCtx): Promise<void> {
+  const cmd = COMMANDS.find((c) => c.name === name);
+  if (!cmd) throw new Error(`unknown command: ${name}`);
+  return cmd.run(ctx);
 }

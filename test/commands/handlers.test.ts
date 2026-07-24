@@ -11,7 +11,7 @@ import { GangManager } from "../../src/managers/gang-manager";
 import { StatManager } from "../../src/managers/stat-manager";
 import { buildGangsApi } from "../../src/api/impl";
 import { makeMessages } from "../../src/messages";
-import { dispatch, type CmdCtx, type OnlinePlayer } from "../../src/commands/handlers";
+import { runCommand, type CmdCtx, type OnlinePlayer } from "../../src/commands/handlers";
 import { INVITATION_STAT, PENDING_STAT, DOOR_POLICY_STAT } from "../../src/commands/handlers";
 
 async function harness() {
@@ -40,7 +40,7 @@ describe("command handlers", () => {
   it("create makes a gang and reports success", async () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" });
-    await dispatch(h.ctx("owner", ["Wolves"]), "create");
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     expect(h.replies.join("\n")).toContain("Wolves");
     expect(await h.api.gangs.getByMember("owner")).not.toBeNull();
   });
@@ -48,11 +48,11 @@ describe("command handlers", () => {
   it("invite then join moves the invitee into the gang", async () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
-    await dispatch(h.ctx("owner", ["Wolves"]), "create");
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
     const gang = await h.api.gangs.getByMember("owner");
-    await dispatch(h.ctx("owner", ["Bob"]), "invite");
+    await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
     // bob sees pending, joins by gang name
-    await dispatch(h.ctx("bob", ["Wolves"]), "join");
+    await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));
     const bob = await h.api.players.get("bob");
     expect(bob?.gangId).toBe(gang!.gangId);
   });
@@ -60,22 +60,22 @@ describe("command handlers", () => {
   it("kick requires KICK_OTHERS and removes a lower member", async () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
-    await dispatch(h.ctx("owner", ["Wolves"]), "create");
-    await dispatch(h.ctx("owner", ["Bob"]), "invite");
-    await dispatch(h.ctx("bob", ["Wolves"]), "join");
-    await dispatch(h.ctx("owner", ["Bob"]), "kick");
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
+    await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));
+    await runCommand("sm_gang_kick", h.ctx("owner", ["Bob"]));
     expect((await h.api.players.get("bob"))?.gangId).toBeNull();
   });
 
   it("a lower-ranked member cannot demote the owner", async () => {
     const h = await harness();
     h.online.push({ steam: "owner", name: "O" }, { steam: "bob", name: "Bob" });
-    await dispatch(h.ctx("owner", ["Wolves"]), "create");
-    await dispatch(h.ctx("owner", ["Bob"]), "invite");
-    await dispatch(h.ctx("bob", ["Wolves"]), "join");   // bob = Member (100)
-    await dispatch(h.ctx("owner", ["bob"]), "promote");  // 100 -> 50 Officer
-    await dispatch(h.ctx("owner", ["bob"]), "promote");  // 50 -> 30 Manager (has DEMOTE_OTHERS)
-    await dispatch(h.ctx("bob", ["owner"]), "demote");   // bob tries to demote the owner
+    await runCommand("sm_gang_create", h.ctx("owner", ["Wolves"]));
+    await runCommand("sm_gang_invite", h.ctx("owner", ["Bob"]));
+    await runCommand("sm_gang_join", h.ctx("bob", ["Wolves"]));   // bob = Member (100)
+    await runCommand("sm_gang_promote", h.ctx("owner", ["bob"]));  // 100 -> 50 Officer
+    await runCommand("sm_gang_promote", h.ctx("owner", ["bob"]));  // 50 -> 30 Manager (has DEMOTE_OTHERS)
+    await runCommand("sm_gang_demote", h.ctx("bob", ["owner"]));   // bob tries to demote the owner
     expect((await h.api.players.get("owner"))?.gangRank).toBe(0); // still owner
   });
 });

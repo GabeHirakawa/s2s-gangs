@@ -14,7 +14,7 @@ import { StatManager } from "./managers/stat-manager";
 import { buildGangsApi } from "./api/impl";
 import type { EmitFn, GangEvents } from "./api/events";
 import { makeMessages } from "./messages";
-import { runGangCommand } from "./commands/gang";
+import { registerGangCommands } from "./commands/gang";
 import { INVITATION_STAT, PENDING_STAT, DOOR_POLICY_STAT } from "./commands/handlers";
 
 export default plugin(async (ctx) => {
@@ -46,7 +46,7 @@ export default plugin(async (ctx) => {
   handle = ctx.publish<GangsApi>("@gangs/api", api);
 
   let msg = makeMessages(tag);
-  ctx.commands.register("gang", (cmd) => runGangCommand(api, msg, cmd));
+  registerGangCommands(ctx.commands, api, () => msg);
 
   // Live-reload the chat tag (design §7); the command closure reads `msg` by reference.
   ctx.config.onChange(() => { msg = makeMessages(config.getString("chat_tag") || "Gangs>"); });

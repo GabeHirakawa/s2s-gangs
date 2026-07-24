@@ -21,7 +21,7 @@ export interface Messages {
 export function makeMessages(tag: string): Messages {
   const p = (s: string): string => `${tag} ${s}`;
   return {
-    notInGang: () => p("You are not in a gang. Type /gang create [name] to create one."),
+    notInGang: () => p("You are not in a gang. Type !gang_create <name> to create one."),
     created: (name, id) => p(`Successfully created the '${name}' (${id}) gang.`),
     alreadyInGang: () => p("You are already in a gang."),
     invited: (target, gang) => p(`You invited ${target} to ${gang}.`),
@@ -34,7 +34,7 @@ export function makeMessages(tag: string): Messages {
     noPermission: (node) => p(`You are missing the ${node} permission.`),
     usage: (text) => p(`Usage: ${text}`),
     disbandWarning: () =>
-      p("WARNING: This is irreversible. Type /gang disband confirm to confirm."),
+      p("WARNING: This is irreversible. Type !gang_disband confirm to confirm."),
     disbanded: (name) => p(`${name} disbanded the gang.`),
     playerNotFound: (query) => p(`Could not find a player using "${query}".`),
   };
