@@ -1,0 +1,15 @@
+{
+  "name": "gangs",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/plugin.ts",
+  "scripts": {
+    "build": "s2s build ."
+  },
+  "devDependencies": {
+    "@s2script/sdk": "^0.8.0",
+    "@s2script/cs2": "^0.7.4",
+    "@s2script/eslint-plugin": "^0.2.0",
+    "eslint": "^10.7.0"
+  }
+}
