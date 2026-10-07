@@ -1,245 +1,245 @@
 import type { CmdCtx } from "./ctx";
 export type { CmdCtx, OnlinePlayer } from "./ctx";
-import type { StatDescriptor } from "../db/instance.repo";
 import { Perm } from "../domain/perm";
 import { DoorPolicy } from "../domain/types";
+import { DOOR_POLICY_STAT } from "../store/stats";
 import { cmdRanks, cmdRankCreate, cmdRankRename, cmdRankDelete, cmdRankPerm } from "./ranks";
 import { cmdPerks, cmdPurchase, cmdMotd } from "./perks";
 
-export const INVITATION_STAT: StatDescriptor = {
-  id: "gang_invitation", scope: "gang", kind: "record",
-  columns: {
-    InvitedSteams: "VARCHAR(255)", InviterSteams: "VARCHAR(255)",
-    RequestedSteams: "VARCHAR(255)", Dates: "VARCHAR(255)", MaxAmo: "INT",
-  },
-};
-export const PENDING_STAT: StatDescriptor = {
-  id: "pending_invitation", scope: "player", kind: "record", columns: { InvitingGangs: "VARCHAR(255)" },
-};
-export const DOOR_POLICY_STAT: StatDescriptor = {
-  id: "gang_door_policy", scope: "gang", kind: "scalar", column: "INT",
-};
-
-export async function requireGang(ctx: CmdCtx): Promise<{ steam: string; gangId: number; rank: number } | null> {
+/** The caller's SteamID, or null after replying (console caller / data still loading). */
+export function requirePlayer(ctx: CmdCtx): string | null {
   if (ctx.steam === null) { ctx.reply("Only players can use this."); return null; }
-  const p = await ctx.api.players.get(ctx.steam, false);
-  if (!p || p.gangId === null || p.gangRank === null) { ctx.reply(ctx.msg.notInGang()); return null; }
-  return { steam: ctx.steam, gangId: p.gangId, rank: p.gangRank };
+  if (!ctx.gangs.svc.isLoaded(ctx.steam)) { ctx.reply(ctx.msg.loading()); return null; }
+  return ctx.steam;
 }
 
-export async function gate(ctx: CmdCtx, steam: string, perm: number, node: string): Promise<boolean> {
-  if (await ctx.api.ranks.checkPermission(steam, perm)) return true;
+export function requireGang(ctx: CmdCtx): { steam: string; gangId: number; rank: number } | null {
+  const steam = requirePlayer(ctx); if (steam === null) return null;
+  const p = ctx.gangs.svc.getPlayer(steam);
+  if (!p || p.gangId === null || p.gangRank === null) { ctx.reply(ctx.msg.notInGang()); return null; }
+  return { steam, gangId: p.gangId, rank: p.gangRank };
+}
+
+export function gate(ctx: CmdCtx, steam: string, perm: number, node: string): boolean {
+  if (ctx.gangs.svc.hasPermission(steam, perm)) return true;
   ctx.reply(ctx.msg.noPermission(node));
   return false;
 }
 
-async function cmdCreate(ctx: CmdCtx): Promise<void> {
-  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
+const nameOf = (p: { steam: string; name: string | null }): string => p.name ?? p.steam;
+
+function cmdCreate(ctx: CmdCtx): void {
+  const steam = requirePlayer(ctx); if (steam === null) return;
   const name = ctx.args.join(" ").trim();
   if (!name) { ctx.reply(ctx.msg.usage("!gang_create <name>")); return; }
-  const existing = await ctx.api.players.get(ctx.steam, false);
-  if (existing?.gangId != null) { ctx.reply(ctx.msg.alreadyInGang()); return; }
-  await ctx.api.players.create(ctx.steam, ctx.online(ctx.steam)[0]?.name ?? null);
-  const gang = await ctx.api.gangs.create(name, ctx.steam);
+  const { svc } = ctx.gangs;
+  if (svc.getPlayer(steam)?.gangId != null) { ctx.reply(ctx.msg.alreadyInGang()); return; }
+  if (svc.isNameTaken(name)) { ctx.reply(ctx.msg.nameTaken(name)); return; }
+  const gang = svc.createGang(name, steam);
   ctx.reply(gang ? ctx.msg.created(gang.name, gang.gangId) : "Failed to create gang.");
 }
 
-async function cmdInvite(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  if (!(await gate(ctx, me.steam, Perm.INVITE_OTHERS, "Invite Others"))) return;
-  const query = ctx.args.join(" ").trim();
-  const matches = ctx.online(query);
-  if (matches.length !== 1) { ctx.reply(ctx.msg.playerNotFound(query)); return; }
-  const target = matches[0];
-  const targetPlayer = await ctx.api.players.get(target.steam, false);
-  if (targetPlayer?.gangId != null) { ctx.reply(`${target.name} is already in a gang.`); return; }
-  await ctx.api.invites.create(me.gangId, me.steam, target.steam, ctx.nowSec);
-  const gang = await ctx.api.gangs.get(me.gangId);
-  ctx.reply(ctx.msg.invited(target.name, gang?.name ?? String(me.gangId)));
+function cmdRename(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  if (me.rank !== 0) { ctx.reply(ctx.msg.noPermission("Owner")); return; }
+  const name = ctx.args.join(" ").trim();
+  if (!name) { ctx.reply(ctx.msg.usage("!gang_rename <name>")); return; }
+  if (ctx.gangs.svc.isNameTaken(name, me.gangId)) { ctx.reply(ctx.msg.nameTaken(name)); return; }
+  ctx.reply(ctx.gangs.svc.renameGang(me.gangId, name) ? ctx.msg.renamed(name.trim()) : "Failed to rename the gang.");
 }
 
-async function cmdInvites(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  const list = await ctx.api.invites.outgoing(me.gangId);
+function cmdInvite(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  if (!gate(ctx, me.steam, Perm.INVITE_OTHERS, "Invite Others")) return;
+  const { svc } = ctx.gangs;
+  const query = ctx.args.join(" ").trim();
+  const matches = query ? ctx.online(query) : [];
+  if (matches.length !== 1) { ctx.reply(ctx.msg.playerNotFound(query)); return; }
+  const target = matches[0];
+  if (svc.getPlayer(target.steam)?.gangId != null) { ctx.reply(`${target.name} is already in a gang.`); return; }
+  svc.createInvite(me.gangId, me.steam, target.steam, ctx.nowSec);
+  ctx.reply(ctx.msg.invited(target.name, svc.getGang(me.gangId)?.name ?? String(me.gangId)));
+}
+
+function cmdInvites(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  const list = ctx.gangs.svc.outgoingInvites(me.gangId);
   ctx.reply(list.length ? `Outgoing invites: ${list.join(", ")}` : "Your gang has not invited anyone.");
 }
 
-async function cmdPending(ctx: CmdCtx): Promise<void> {
-  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
-  const gangs = await ctx.api.invites.pending(ctx.steam);
+function cmdPending(ctx: CmdCtx): void {
+  const steam = requirePlayer(ctx); if (steam === null) return;
+  const { svc } = ctx.gangs;
+  const gangs = svc.pendingInvites(steam);
   if (!gangs.length) { ctx.reply("You have no pending invites."); return; }
-  const names: string[] = [];
-  for (const id of gangs) names.push((await ctx.api.gangs.get(id))?.name ?? `#${id}`);
+  const names = gangs.map((id) => svc.getGang(id)?.name ?? `#${id}`);
   ctx.reply(`Invited by: ${names.join(", ")}. Use !gang_join <name> to accept.`);
 }
 
-async function resolveGangByName(ctx: CmdCtx, query: string): Promise<number | null> {
-  const q = query.trim().toLowerCase();
-  const all = await ctx.api.gangs.getAll();
-  const byName = all.filter((g) => g.name.toLowerCase() === q);
-  if (byName.length === 1) return byName[0].gangId;
-  const partial = all.filter((g) => g.name.toLowerCase().includes(q));
-  return partial.length === 1 ? partial[0].gangId : null;
-}
+function cmdJoin(ctx: CmdCtx): void {
+  const steam = requirePlayer(ctx); if (steam === null) return;
+  const { svc, perks } = ctx.gangs;
+  if (svc.getPlayer(steam)?.gangId != null) { ctx.reply(ctx.msg.alreadyInGang()); return; }
+  const gang = svc.findGangByName(ctx.args.join(" "));
+  if (!gang) { ctx.reply("Could not find that gang."); return; }
 
-async function cmdJoin(ctx: CmdCtx): Promise<void> {
-  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
-  const player = await ctx.api.players.get(ctx.steam, false);
-  if (player?.gangId != null) { ctx.reply(ctx.msg.alreadyInGang()); return; }
-  const gangId = await resolveGangByName(ctx, ctx.args.join(" "));
-  if (gangId === null) { ctx.reply("Could not find that gang."); return; }
-
-  const policy = (await ctx.api.stats.getForGang<number>(gangId, "gang_door_policy")) ?? DoorPolicy.REQUEST_ONLY;
-  const invited = (await ctx.api.invites.outgoing(gangId)).includes(ctx.steam);
-  // v0.1: OPEN lets anyone in; every other policy requires an invite (request-to-join is deferred).
+  const raw = svc.gangStat(gang.gangId, DOOR_POLICY_STAT);
+  const policy = typeof raw === "number" ? raw : DoorPolicy.REQUEST_ONLY;
+  const invited = svc.outgoingInvites(gang.gangId).includes(steam);
+  // OPEN lets anyone in; every other policy requires an invite (request-to-join is deferred).
   if (policy !== DoorPolicy.OPEN && !invited) { ctx.reply("You need an invite to join this gang."); return; }
 
-  await ctx.api.players.create(ctx.steam, ctx.online(ctx.steam)[0]?.name ?? null);
-  const joinRank = await ctx.api.ranks.getJoinRank(gangId);
+  const joinRank = svc.joinRank(gang.gangId);
   if (!joinRank) { ctx.reply("Failed to join."); return; }
-  const capacity = await ctx.api.perks.getCapacity(gangId);
-  const count = (await ctx.api.players.getMembers(gangId)).length;
-  if (count >= capacity) { ctx.reply("That gang is full."); return; }
-  await ctx.api.members.add(gangId, ctx.steam, joinRank.rank);
-  if (invited) await ctx.api.invites.revoke(gangId, ctx.steam);
-  const gang = await ctx.api.gangs.get(gangId);
-  ctx.reply(ctx.msg.joined(gang?.name ?? String(gangId)));
+  if (svc.memberCount(gang.gangId) >= perks.capacity(gang.gangId)) { ctx.reply("That gang is full."); return; }
+  if (!svc.addMember(gang.gangId, steam, joinRank.rank)) { ctx.reply("Failed to join."); return; }
+  if (invited) svc.revokeInvite(gang.gangId, steam);
+  ctx.reply(ctx.msg.joined(gang.name));
 }
 
-async function cmdLeave(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
+function cmdLeave(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
   if (me.rank === 0) { ctx.reply("Owners must transfer or disband, not leave."); return; }
-  const p = await ctx.api.players.get(me.steam, false);
-  await ctx.api.members.remove(me.steam, "leave");
-  ctx.reply(ctx.msg.left(p?.name ?? me.steam));
+  const p = ctx.gangs.svc.getPlayer(me.steam);
+  ctx.gangs.svc.removeMember(me.steam, "leave");
+  ctx.reply(ctx.msg.left(p ? nameOf(p) : me.steam));
 }
 
-async function cmdKick(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  if (!(await gate(ctx, me.steam, Perm.KICK_OTHERS, "Kick Others"))) return;
-  const target = await ctx.api.players.findInGang(me.gangId, ctx.args.join(" "));
-  if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return; }
+function cmdKick(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  if (!gate(ctx, me.steam, Perm.KICK_OTHERS, "Kick Others")) return;
+  const query = ctx.args.join(" ");
+  const target = ctx.gangs.svc.findInGang(me.gangId, query);
+  if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(query)); return; }
   if (target.gangRank <= me.rank) { ctx.reply("You cannot kick someone of equal or higher rank."); return; }
-  await ctx.api.members.remove(target.steam, "kick");
-  ctx.reply(ctx.msg.kicked(target.name ?? target.steam));
+  ctx.gangs.svc.removeMember(target.steam, "kick");
+  ctx.reply(ctx.msg.kicked(nameOf(target)));
 }
 
-async function changeRank(ctx: CmdCtx, dir: "promote" | "demote"): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
+function changeRank(ctx: CmdCtx, dir: "promote" | "demote"): void {
+  const me = requireGang(ctx); if (!me) return;
   const perm = dir === "promote" ? Perm.PROMOTE_OTHERS : Perm.DEMOTE_OTHERS;
-  if (!(await gate(ctx, me.steam, perm, dir === "promote" ? "Promote Others" : "Demote Others"))) return;
-  const target = await ctx.api.players.findInGang(me.gangId, ctx.args.join(" "));
-  if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return; }
+  if (!gate(ctx, me.steam, perm, dir === "promote" ? "Promote Others" : "Demote Others")) return;
+  const { svc } = ctx.gangs;
+  const query = ctx.args.join(" ");
+  const target = svc.findInGang(me.gangId, query);
+  if (!target || target.gangRank === null) { ctx.reply(ctx.msg.playerNotFound(query)); return; }
   if (target.gangRank <= me.rank) { ctx.reply("You cannot change the rank of someone equal or above you."); return; }
-  const ranks = await ctx.api.ranks.getAll(me.gangId);
-  const sorted = ranks.map((r) => r.rank).sort((a, b) => a - b);
+  const ranks = svc.ranksOf(me.gangId);
+  const sorted = ranks.map((r) => r.rank);
   const idx = sorted.indexOf(target.gangRank);
   const nextRank = dir === "promote" ? sorted[idx - 1] : sorted[idx + 1];
   if (nextRank === undefined) { ctx.reply("No rank to move to."); return; }
   if (dir === "promote" && nextRank <= me.rank) { ctx.reply("You cannot promote above yourself."); return; }
-  await ctx.api.members.setRank(target.steam, nextRank);
-  const rankObj = ranks.find((r) => r.rank === nextRank)!;
-  ctx.reply(dir === "promote"
-    ? ctx.msg.promoted(target.name ?? target.steam, rankObj.name)
-    : ctx.msg.demoted(target.name ?? target.steam, rankObj.name));
+  svc.setMemberRank(target.steam, nextRank);
+  const rankName = ranks.find((r) => r.rank === nextRank)?.name ?? String(nextRank);
+  ctx.reply(dir === "promote" ? ctx.msg.promoted(nameOf(target), rankName) : ctx.msg.demoted(nameOf(target), rankName));
 }
 
-async function cmdTransfer(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
+function cmdTransfer(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
   if (me.rank !== 0) { ctx.reply(ctx.msg.noPermission("Owner")); return; }
-  const target = await ctx.api.players.findInGang(me.gangId, ctx.args.join(" "));
+  const { svc } = ctx.gangs;
+  const query = ctx.args.join(" ");
+  const target = svc.findInGang(me.gangId, query);
   if (!target || target.gangRank === null || target.steam === me.steam) {
-    ctx.reply(ctx.msg.playerNotFound(ctx.args.join(" "))); return;
+    ctx.reply(ctx.msg.playerNotFound(query)); return;
   }
-  const joinRank = await ctx.api.ranks.getJoinRank(me.gangId);
-  await ctx.api.members.setRank(target.steam, 0);
-  await ctx.api.members.setRank(me.steam, joinRank?.rank ?? me.rank);
-  ctx.reply(`Transferred ownership to ${target.name ?? target.steam}.`);
+  const joinRank = svc.joinRank(me.gangId);
+  svc.setMemberRank(target.steam, 0);
+  svc.setMemberRank(me.steam, joinRank?.rank ?? me.rank);
+  ctx.reply(`Transferred ownership to ${nameOf(target)}.`);
 }
 
-async function cmdMembers(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  const members = await ctx.api.players.getMembers(me.gangId);
-  const ranks = await ctx.api.ranks.getAll(me.gangId);
+function cmdMembers(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  const { svc } = ctx.gangs;
+  const ranks = svc.ranksOf(me.gangId);
   const rankName = (n: number | null): string => ranks.find((r) => r.rank === n)?.name ?? "?";
   ctx.reply("Members:");
-  for (const m of members) ctx.reply(ctx.msg.memberLine(m.name ?? m.steam, rankName(m.gangRank)));
+  for (const m of svc.membersOf(me.gangId)) ctx.reply(ctx.msg.memberLine(nameOf(m), rankName(m.gangRank)));
 }
 
-async function cmdDoorPolicy(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  if (!(await gate(ctx, me.steam, Perm.MANAGE_RANKS, "Manage Ranks"))) return;
+function cmdDoorPolicy(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  if (!gate(ctx, me.steam, Perm.MANAGE_RANKS, "Manage Ranks")) return;
   const map: Record<string, DoorPolicy> = {
     open: DoorPolicy.OPEN, invite: DoorPolicy.INVITE_ONLY, request: DoorPolicy.REQUEST_ONLY,
   };
-  const choice = map[(ctx.args[0] ?? "").toLowerCase()];
+  const key = (ctx.args[0] ?? "").toLowerCase();
+  const choice = map[key];
   if (choice === undefined) { ctx.reply(ctx.msg.usage("!gang_doorpolicy <open|invite|request>")); return; }
-  await ctx.api.stats.setForGang(me.gangId, "gang_door_policy", choice);
-  ctx.reply(`Door policy set to ${ctx.args[0].toLowerCase()}.`);
+  ctx.gangs.svc.setGangStat(me.gangId, DOOR_POLICY_STAT, choice);
+  ctx.reply(`Door policy set to ${key}.`);
 }
 
-async function cmdDisband(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
+function cmdDisband(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
   if (me.rank !== 0) { ctx.reply(ctx.msg.noPermission("Owner")); return; }
   if ((ctx.args[0] ?? "").toLowerCase() !== "confirm") { ctx.reply(ctx.msg.disbandWarning()); return; }
-  const gang = await ctx.api.gangs.get(me.gangId);
-  await ctx.api.gangs.delete(me.gangId);
-  ctx.reply(ctx.msg.disbanded(gang?.name ?? String(me.gangId)));
+  const { svc } = ctx.gangs;
+  const name = svc.getGang(me.gangId)?.name ?? String(me.gangId);
+  svc.disbandGang(me.gangId);
+  ctx.reply(ctx.msg.disbanded(name));
 }
 
-async function cmdInfo(ctx: CmdCtx): Promise<void> {
-  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
-  const membership = await ctx.api.players.getMembership(ctx.steam);
-  if (!membership) { ctx.reply(ctx.msg.notInGang()); return; }
-  const count = (await ctx.api.players.getMembers(membership.gang.gangId)).length;
-  ctx.reply(`${membership.gang.name} — your rank: ${membership.rank.name} — members: ${count}`);
+function cmdInfo(ctx: CmdCtx): void {
+  const steam = requirePlayer(ctx); if (steam === null) return;
+  const { svc } = ctx.gangs;
+  const gang = svc.gangOf(steam);
+  const rank = svc.rankOfMember(steam);
+  if (!gang || !rank) { ctx.reply(ctx.msg.notInGang()); return; }
+  ctx.reply(`${gang.name} — your rank: ${rank.name} — members: ${svc.memberCount(gang.gangId)}`);
 }
 
-async function cmdBalance(ctx: CmdCtx): Promise<void> {
-  if (ctx.steam === null) { ctx.reply("Only players can use this."); return; }
-  ctx.reply(ctx.msg.balance(await ctx.api.eco.getBalance(ctx.steam, true)));
-  const membership = await ctx.api.players.getMembership(ctx.steam);
-  if (membership) ctx.reply(ctx.msg.gangBalance(membership.gang.name, await ctx.api.eco.getGangBalance(membership.gang.gangId)));
+function cmdBalance(ctx: CmdCtx): void {
+  const steam = requirePlayer(ctx); if (steam === null) return;
+  const { svc, eco } = ctx.gangs;
+  ctx.reply(ctx.msg.balance(eco.getBalance(steam, true)));
+  const gang = svc.gangOf(steam);
+  if (gang) ctx.reply(ctx.msg.gangBalance(gang.name, eco.getGangBalance(gang.gangId)));
 }
 
-async function cmdDeposit(ctx: CmdCtx): Promise<void> {
-  const me = await requireGang(ctx); if (!me) return;
-  if (!(await gate(ctx, me.steam, Perm.BANK_DEPOSIT, "Deposit Money"))) return;
+function cmdDeposit(ctx: CmdCtx): void {
+  const me = requireGang(ctx); if (!me) return;
+  if (!gate(ctx, me.steam, Perm.BANK_DEPOSIT, "Deposit Money")) return;
+  const { eco } = ctx.gangs;
   const raw = (ctx.args[0] ?? "").toLowerCase();
   let amount: number;
   if (raw === "all") {
-    amount = await ctx.api.eco.getBalance(me.steam, true);
+    amount = eco.getBalance(me.steam, true);
     if (amount <= 0) { ctx.reply(ctx.msg.noCredits()); return; }
   } else {
     amount = parseInt(raw, 10);
-    if (!Number.isInteger(amount) || String(amount) !== raw.replace(/^\+/, "") || amount <= 0) {
+    if (!Number.isSafeInteger(amount) || String(amount) !== raw.replace(/^\+/, "") || amount <= 0) {
       ctx.reply(ctx.msg.usage("!gang_deposit <amount|all>")); return;
     }
   }
-  const remaining = await ctx.api.eco.tryPurchase(me.steam, amount, { excludeGangCredits: true });
-  if (remaining < 0) { ctx.reply(ctx.msg.cannotAfford(Math.abs(remaining))); return; }
-  await ctx.api.eco.grantGang(me.gangId, amount, "deposit");
+  const wallet = eco.getBalance(me.steam, true);
+  if (eco.tryPurchase(me.steam, amount, "deposit", true) < 0) { ctx.reply(ctx.msg.cannotAfford(amount - wallet)); return; }
+  eco.grantGang(me.gangId, amount, "deposit");
   ctx.reply(ctx.msg.deposited(amount));
 }
 
-function cmdHelp(ctx: CmdCtx): Promise<void> {
+function cmdHelp(ctx: CmdCtx): void {
   // Derived from COMMANDS: "!gang_create, !gang_invite, …" (the bare !gang omitted).
-  const names = COMMANDS.map((c) => "!" + c.name.slice("sm_".length))
+  const names = [...COMMANDS.map((c) => c.name), "sm_gang_menu"]
+    .map((n) => "!" + n.slice("sm_".length))
     .filter((n) => n !== "!gang").join(", ");
   ctx.reply(ctx.msg.usage(names));
-  return Promise.resolve();
 }
 
 /** One registered command. `name` is the engine command (e.g. "sm_gang_create"); chat "!gang_create"
  *  resolves to it. Each is registered individually — there is no central subcommand dispatcher. */
 export interface GangCommand {
   name: string;
-  run: (ctx: CmdCtx) => Promise<void>;
+  run: (ctx: CmdCtx) => void;
 }
 
 export const COMMANDS: GangCommand[] = [
   { name: "sm_gang", run: cmdInfo },
   { name: "sm_gang_create", run: cmdCreate },
+  { name: "sm_gang_rename", run: cmdRename },
   { name: "sm_gang_invite", run: cmdInvite },
   { name: "sm_gang_invites", run: cmdInvites },
   { name: "sm_gang_pending", run: cmdPending },
@@ -265,10 +265,10 @@ export const COMMANDS: GangCommand[] = [
   { name: "sm_gang_help", run: cmdHelp },
 ];
 
-/** Test/utility helper: run a registered command by its full name. The runtime does NOT route through
- *  this — each command is registered directly with the engine (see registerGangCommands). */
-export function runCommand(name: string, ctx: CmdCtx): Promise<void> {
+/** Run a command by its full name (used by the menu router and tests; the runtime registers each
+ *  command directly with the engine). */
+export function runCommand(name: string, ctx: CmdCtx): void {
   const cmd = COMMANDS.find((c) => c.name === name);
   if (!cmd) throw new Error(`unknown command: ${name}`);
-  return cmd.run(ctx);
+  cmd.run(ctx);
 }
