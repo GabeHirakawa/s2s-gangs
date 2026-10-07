@@ -1,190 +1,148 @@
-import type { GangManager } from "../managers/gang-manager";
-import type { PlayerManager } from "../managers/player-manager";
-import type { RankManager } from "../managers/rank-manager";
-import type { StatManager } from "../managers/stat-manager";
-import type { EmitFn } from "./events";
-import type { GangsApi } from "../../api";
-import type { Membership } from "../domain/types";
-import {
-  emptyInvitation, addInvitation, removeInvitation, invitedList,
-  addPending, removePending, pendingList,
-  type InvitationData, type PendingInvitationData,
-} from "../domain/invitation";
-import { EcoManager } from "../eco/eco-manager";
-import { Perm } from "../domain/perm";
-import { PerkRegistry } from "../perks/perk-registry";
-import { ALL_PERKS } from "../perks/perk";
+import type { Gang as ApiGang, GangsApi, Member, PerkSpec, PurchaseResult, Rank, StatValue } from "../../api";
+import type { GangService } from "../service/gang-service";
+import type { Economy } from "../eco/economy";
+import type { PerkCatalog } from "../perks/catalog";
+import type { GangPlayer } from "../domain/types";
+import { BALANCE_STAT, type CachedStat, type StatScope, fitsColumn, isRecord, nativeDescriptor } from "../store/stats";
 
-const INVITATION = "gang_invitation";
-const PENDING = "pending_invitation";
+const U64_MAX = "18446744073709551615";
 
-export interface Managers {
-  gangs: GangManager; players: PlayerManager; ranks: RankManager; stats: StatManager;
+/** A canonical, nonzero decimal SteamID64 (no sign, no leading zeros, fits in u64). */
+export function isSteamId(v: string): boolean {
+  if (typeof v !== "string" || !/^[1-9][0-9]{0,19}$/.test(v)) return false;
+  return v.length < 20 || v <= U64_MAX;
+}
+const isGangId = (v: number): boolean => Number.isSafeInteger(v) && v > 0;
+const isStatId = (v: string): boolean => typeof v === "string" && v.length > 0 && v.length <= 255;
+const isText = (v: string): boolean => typeof v === "string" && v.length <= 255;
+const MAX_STAT_STRING = 4096;
+
+function isStatValue(v: StatValue): boolean {
+  if (v === null || typeof v === "boolean") return true;
+  if (typeof v === "number") return Number.isFinite(v);
+  return typeof v === "string" && v.length <= MAX_STAT_STRING;
 }
 
-export function buildGangsApi(m: Managers, emit: EmitFn): GangsApi {
-  const eco = new EcoManager(m.stats, m.players, m.ranks, {
-    player: (steam, balance, delta, reason) => emit("player_credits_changed", { steam, balance, delta, reason }),
-    gang: (gangId, balance, delta, reason) => emit("gang_credits_changed", { gangId, balance, delta, reason }),
-  });
-  const perks = new PerkRegistry();
-  for (const p of ALL_PERKS) { perks.register(p); m.stats.register(p.descriptor); }
+/** Cache value → public StatValue (records — upstream multi-column stats — surface as JSON text). */
+function publicValue(v: CachedStat): StatValue {
+  return isRecord(v) ? JSON.stringify(v) : v;
+}
+
+/** Can a public caller write `value` to `statId`? Balances go through grant*; records are internal. */
+function writable(scope: StatScope, statId: string, value: StatValue): boolean {
+  if (!isStatId(statId) || !isStatValue(value)) return false;
+  if (statId === BALANCE_STAT) return false;
+  const d = nativeDescriptor(scope, statId);
+  if (!d) return true;
+  return d.kind === "scalar" && fitsColumn(d.column, value);
+}
+
+const toGang = (g: { gangId: number; name: string }): ApiGang => ({ id: g.gangId, name: g.name });
+const toMember = (p: GangPlayer): Member => ({
+  steamId: p.steam, name: p.name ?? "", gangId: p.gangId ?? 0, rank: p.gangRank ?? 0,
+});
+
+export interface ApiDeps {
+  svc: GangService;
+  eco: Economy;
+  perks: PerkCatalog;
+  /** Print `message` (already formatted) to every online member of `gangId`. */
+  sendGangChat(gangId: number, message: string): void;
+}
+
+/**
+ * The `@gangs/api` implementation: every method is synchronous over the service cache, validates
+ * its (wire-copied) inputs, and returns plain data built fresh per call — never a cache reference.
+ */
+export function buildGangsApi(d: ApiDeps): GangsApi {
+  const { svc, eco, perks } = d;
+  const ready = (): boolean => svc.isReady();
   return {
-    gangs: {
-      getAll: () => m.gangs.getGangs(),
-      get: (id) => m.gangs.getGang(id),
-      getByMember: (steam) => m.gangs.getGangByMember(steam),
-      async create(name, ownerSteam) {
-        const gang = await m.gangs.createGang(name, ownerSteam);
-        if (gang) emit("gang_created", { gangId: gang.gangId, name: gang.name, ownerSteam });
-        return gang;
-      },
-      async updateName(gangId, name) {
-        const ok = await m.gangs.updateGang({ gangId, name });
-        if (ok) emit("gang_renamed", { gangId, name });
-        return ok;
-      },
-      async delete(id) {
-        const members = await m.players.getMembers(id); // capture before the cascade clears them
-        const ok = await m.gangs.deleteGang(id);
-        if (ok) {
-          for (const mem of members)
-            emit("member_left", { gangId: id, steam: mem.steam, reason: "disband" });
-          emit("gang_deleted", { gangId: id });
-        }
-        return ok;
-      },
+    isReady: () => ready(),
+
+    getGang(gangId: number): ApiGang | null {
+      if (!isGangId(gangId)) return null;
+      const g = svc.getGang(gangId);
+      return g ? toGang(g) : null;
     },
-    players: {
-      get: (steam, create) => m.players.getPlayer(steam, create),
-      create: (steam, name) => m.players.createPlayer(steam, name ?? null),
-      getAll: () => m.players.getAllPlayers(),
-      getMembers: (gangId) => m.players.getMembers(gangId),
-      findInGang: (gangId, query) => m.players.findPlayerInGang(gangId, query),
-      async getMembership(steam): Promise<Membership | null> {
-        const player = await m.players.getPlayer(steam, false);
-        if (!player || player.gangId === null || player.gangRank === null) return null;
-        const gang = await m.gangs.getGang(player.gangId);
-        const rank = await m.ranks.getRank(player.gangId, player.gangRank);
-        if (!gang || !rank) return null;
-        return { player, gang, rank };
-      },
-      update: (p) => m.players.updatePlayer(p),
-      delete: (steam) => m.players.deletePlayer(steam),
+    getGangOf(steamId: string): ApiGang | null {
+      if (!isSteamId(steamId)) return null;
+      const g = svc.gangOf(steamId);
+      return g ? toGang(g) : null;
     },
-    members: {
-      async add(gangId, steam, rank) {
-        const p = await m.players.getPlayer(steam);
-        if (!p) return false;
-        const ok = await m.players.updatePlayer({ ...p, gangId, gangRank: rank });
-        if (ok) emit("member_joined", { gangId, steam, rank });
-        return ok;
-      },
-      async remove(steam, reason) {
-        const p = await m.players.getPlayer(steam, false);
-        if (!p || p.gangId === null) return false;
-        const gangId = p.gangId;
-        const ok = await m.players.updatePlayer({ ...p, gangId: null, gangRank: null });
-        if (ok) emit("member_left", { gangId, steam, reason });
-        return ok;
-      },
-      async setRank(steam, newRank) {
-        const p = await m.players.getPlayer(steam, false);
-        if (!p || p.gangId === null || p.gangRank === null) return false;
-        const oldRank = p.gangRank;
-        if (oldRank === newRank) return true;
-        const ok = await m.players.updatePlayer({ ...p, gangRank: newRank });
-        if (ok) emit("member_rank_changed", { gangId: p.gangId, steam, oldRank, newRank });
-        return ok;
-      },
+    getMember(steamId: string): Member | null {
+      if (!isSteamId(steamId)) return null;
+      const p = svc.getPlayer(steamId);
+      return p && p.gangId !== null && p.gangRank !== null ? toMember(p) : null;
     },
-    invites: {
-      async create(gangId, inviter, invited, nowSec) {
-        const data = (await m.stats.getForGang<InvitationData>(gangId, INVITATION)) ?? emptyInvitation();
-        await m.stats.setForGang(gangId, INVITATION, addInvitation(data, inviter, invited, nowSec));
-        const pend = (await m.stats.getForPlayer<PendingInvitationData>(invited, PENDING)) ?? { InvitingGangs: "" };
-        await m.stats.setForPlayer(invited, PENDING, addPending(pend, gangId));
-        emit("invite_created", { gangId, inviter, invited });
-        return true;
-      },
-      async revoke(gangId, invited) {
-        const data = await m.stats.getForGang<InvitationData>(gangId, INVITATION);
-        if (data) await m.stats.setForGang(gangId, INVITATION, removeInvitation(data, invited));
-        const pend = await m.stats.getForPlayer<PendingInvitationData>(invited, PENDING);
-        if (pend) await m.stats.setForPlayer(invited, PENDING, removePending(pend, gangId));
-        emit("invite_revoked", { gangId, invited });
-        return true;
-      },
-      async outgoing(gangId) {
-        const data = await m.stats.getForGang<InvitationData>(gangId, INVITATION);
-        return data ? invitedList(data) : [];
-      },
-      async pending(steam) {
-        const pend = await m.stats.getForPlayer<PendingInvitationData>(steam, PENDING);
-        return pend ? pendingList(pend) : [];
-      },
+    getMembers(gangId: number): Member[] {
+      return isGangId(gangId) ? svc.membersOf(gangId).map(toMember) : [];
     },
-    ranks: {
-      getAll: (gangId) => m.ranks.getRanks(gangId),
-      get: (gangId, rank) => m.ranks.getRank(gangId, rank),
-      create: (gangId, name, rank, permissions) => m.ranks.createRank(gangId, name, rank, permissions),
-      update: (gangId, rank) => m.ranks.updateRank(gangId, rank),
-      delete: (gangId, rank, strat) => m.ranks.deleteRank(gangId, rank, strat),
-      async setPermission(gangId, rank, perm, on) {
-        const r = await m.ranks.getRank(gangId, rank);
-        if (!r) return false;
-        const permissions = on ? (r.permissions | perm) : (r.permissions & ~perm);
-        return m.ranks.updateRank(gangId, { ...r, permissions });
-      },
-      assignDefaults: (gangId) => m.ranks.assignDefaultRanks(gangId),
-      async checkPermission(steam, perm) {
-        const player = await m.players.getPlayer(steam, false);
-        if (!player) return false;
-        return (await m.ranks.checkRank(player, perm)).ok;
-      },
-      getJoinRank: (gangId) => m.ranks.getJoinRank(gangId),
-      getRankNeeded: (gangId, perm) => m.ranks.getRankNeeded(gangId, perm),
+    getRanks(gangId: number): Rank[] {
+      if (!isGangId(gangId)) return [];
+      return svc.ranksOf(gangId).map((r) => ({ rank: r.rank, name: r.name, permissions: r.permissions }));
     },
-    stats: {
-      register: (d) => m.stats.register(d),
-      getForGang: (gangId, statId) => m.stats.getForGang(gangId, statId),
-      setForGang: (gangId, statId, value) => m.stats.setForGang(gangId, statId, value),
-      removeFromGang: (gangId, statId) => m.stats.removeFromGang(gangId, statId),
-      getForPlayer: (steam, statId) => m.stats.getForPlayer(steam, statId),
-      setForPlayer: (steam, statId, value) => m.stats.setForPlayer(steam, statId, value),
-      removeFromPlayer: (steam, statId) => m.stats.removeFromPlayer(steam, statId),
+    hasPermission(steamId: string, perm: number): boolean {
+      if (!isSteamId(steamId) || !Number.isSafeInteger(perm) || perm < 0) return false;
+      return svc.hasPermission(steamId, perm);
     },
-    eco: {
-      getBalance: (steam, excludeGangCredits) => eco.getBalance(steam, excludeGangCredits),
-      getGangBalance: (gangId) => eco.getGangBalance(gangId),
-      canAfford: (steam, cost, excludeGangCredits) => eco.canAfford(steam, cost, excludeGangCredits),
-      tryPurchase: (steam, cost, opts) => eco.tryPurchase(steam, cost, opts?.excludeGangCredits ?? false),
-      grantPlayer: (steam, amount, reason) => eco.grantPlayer(steam, amount, reason ?? null),
-      grantGang: (gangId, amount, reason) => eco.grantGang(gangId, amount, reason ?? null),
+
+    getGangStat(gangId: number, statId: string): StatValue {
+      if (!isGangId(gangId) || !isStatId(statId)) return null;
+      return publicValue(svc.gangStat(gangId, statId));
     },
-    perks: {
-      list: () => perks.list(),
-      getCost: (gangId, perkId) => {
-        const p = perks.get(perkId);
-        return p ? p.getCost(m.stats, gangId) : Promise.resolve(null);
-      },
-      async getCapacity(gangId) {
-        const c = (await m.stats.getForGang<number>(gangId, "gang_native_capacity")) ?? 1;
-        return c < 1 ? 1 : c;
-      },
-      async purchase(steam, perkId) {
-        const player = await m.players.getPlayer(steam, false);
-        if (!player || player.gangId === null) return { ok: false, reason: "not_in_gang" };
-        const perk = perks.get(perkId);
-        if (!perk) return { ok: false, reason: "unknown_perk" };
-        if (!(await m.ranks.checkRank(player, Perm.PURCHASE_PERKS)).ok) return { ok: false, reason: "no_permission" };
-        const cost = await perk.getCost(m.stats, player.gangId);
-        if (cost === null) return { ok: false, reason: "unpurchasable" };
-        const remaining = await eco.tryPurchase(steam, cost); // bank-first
-        if (remaining < 0) return { ok: false, reason: "insufficient_funds", cost };
-        await perk.onPurchase(m.stats, player.gangId);
-        return { ok: true, reason: "ok", cost, balance: remaining };
-      },
+    setGangStat(gangId: number, statId: string, value: StatValue): boolean {
+      if (!ready() || !isGangId(gangId) || !writable("gang", statId, value)) return false;
+      return svc.setGangStat(gangId, statId, value);
+    },
+    getPlayerStat(steamId: string, statId: string): StatValue {
+      if (!isSteamId(steamId) || !isStatId(statId)) return null;
+      return publicValue(svc.playerStat(steamId, statId));
+    },
+    setPlayerStat(steamId: string, statId: string, value: StatValue): boolean {
+      if (!ready() || !isSteamId(steamId) || !writable("player", statId, value)) return false;
+      return svc.setPlayerStat(steamId, statId, value);
+    },
+
+    getBalance(steamId: string, excludeGang: boolean): number {
+      if (!ready() || !isSteamId(steamId)) return 0;
+      return eco.getBalance(steamId, excludeGang === true);
+    },
+    getGangBalance(gangId: number): number {
+      if (!ready() || !isGangId(gangId)) return 0;
+      return eco.getGangBalance(gangId);
+    },
+    tryPurchase(steamId: string, cost: number, reason: string, excludeGang: boolean): number {
+      if (!ready() || !isSteamId(steamId) || !isText(reason)) return -1;
+      return eco.tryPurchase(steamId, cost, reason, excludeGang === true);
+    },
+    grantPlayer(steamId: string, amount: number, reason: string): number {
+      if (!ready() || !isSteamId(steamId) || !isText(reason)) return -1;
+      return eco.grantPlayer(steamId, amount, reason);
+    },
+    grantGang(gangId: number, amount: number, reason: string): number {
+      if (!ready() || !isGangId(gangId) || !isText(reason)) return -1;
+      return eco.grantGang(gangId, amount, reason);
+    },
+
+    registerPerk(provider: string, spec: PerkSpec): boolean {
+      return perks.register(provider, spec);
+    },
+    listPerks: () => perks.list(),
+    getPerkLevel(gangId: number, perkId: string): number {
+      if (!ready() || !isGangId(gangId) || typeof perkId !== "string") return 0;
+      return perks.level(gangId, perkId);
+    },
+    purchasePerk(steamId: string, perkId: string): PurchaseResult {
+      if (!ready()) return { ok: false, reason: "not_ready" };
+      if (!isSteamId(steamId)) return { ok: false, reason: "not_in_gang" };
+      if (typeof perkId !== "string") return { ok: false, reason: "unknown_perk" };
+      return perks.purchase(steamId, perkId);
+    },
+
+    sendGangChat(gangId: number, message: string): void {
+      if (!ready() || !isGangId(gangId) || typeof message !== "string" || !svc.getGang(gangId)) return;
+      d.sendGangChat(gangId, message);
     },
   };
 }
