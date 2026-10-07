@@ -1,30 +1,43 @@
 {
-  "name": "gangs",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@gangs/api",
+  "version": "1.0.0",
+  "description": "Gangs for s2script (CS2): gangs, ranks, economy, perks and a synchronous @gangs/api service (interop protocol 2).",
   "main": "src/plugin.ts",
   "types": "api.d.ts",
   "s2script": {
-    "id": "gangs",
-    "publishes": { "@gangs/api": "0.1.0" },
+    "interfaceProtocol": 2,
+    "publishes": "self",
     "config": {
-      "table_prefix": { "type": "string", "default": "gang" },
-      "db_connection": { "type": "string", "default": "default" },
-      "currency_name": { "type": "string", "default": "credits" },
-      "chat_tag": { "type": "string", "default": "Gangs>" }
+      "table_prefix": {
+        "type": "string",
+        "default": "gang"
+      },
+      "db_connection": {
+        "type": "string",
+        "default": "default"
+      },
+      "currency_name": {
+        "type": "string",
+        "default": "credits"
+      },
+      "chat_tag": {
+        "type": "string",
+        "default": "Gangs>"
+      }
     }
   },
   "scripts": {
     "build": "s2s build .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint ."
   },
   "devDependencies": {
-    "@s2script/sdk": "^0.8.0",
-    "@s2script/cs2": "^0.7.4",
-    "@s2script/eslint-plugin": "^0.2.0",
-    "eslint": "^10.7.0",
-    "vitest": "^2.1.0",
+    "@s2script/cs2": "^0.19.2",
+    "@s2script/eslint-plugin": "^0.2.1",
+    "@s2script/sdk": "^0.27.1",
+    "@types/better-sqlite3": "^7.6.0",
     "better-sqlite3": "^11.0.0",
-    "@types/better-sqlite3": "^7.6.0"
+    "eslint": "^10.7.0",
+    "vitest": "^3.2.7"
   }
 }

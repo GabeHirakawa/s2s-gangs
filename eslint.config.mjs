@@ -5,6 +5,6 @@ import s2script from "@s2script/eslint-plugin";
 // Test/config files are excluded from the plugin build (tsconfig includes only `src`) and run on
 // Node via vitest, where newer-than-ES2020 APIs are allowed — so they are outside the plugin lint.
 export default [
-  { ignores: ["test/**", "vitest.config.ts"] },
+  { ignores: ["test/**", "vitest.config.mjs"] },
   ...s2script.configs.recommended({ tsconfigRootDir: import.meta.dirname }),
 ];
