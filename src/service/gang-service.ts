@@ -1,6 +1,7 @@
 import type { Db } from "../store/db";
 import { GangsRepo, type Snapshot, type StatRow } from "../store/repo";
 import { WriteQueue } from "../store/write-queue";
+import type { DialectName } from "../store/dialect";
 import {
   type CachedStat, type StatScope, INVITATION_STAT, PENDING_STAT,
 } from "../store/stats";
@@ -73,11 +74,11 @@ export class GangService {
   // ── lifecycle ─────────────────────────────────────────────────────────────────────────────────
 
   /** Enqueue the boot op. `onReady` runs (after OnReady is emitted) once the cache is loaded. */
-  start(open: () => Promise<Db>, prefix: string, onReady?: () => void): void {
+  start(open: () => Promise<Db>, prefix: string, dialect: DialectName = "sqlite", onReady?: () => void): void {
     this.queue.enqueue("boot", async () => {
       const db = await open();
       this.db = db;
-      const repo = new GangsRepo(db, prefix);
+      const repo = new GangsRepo(db, prefix, dialect);
       await repo.ensureTables();
       const snap = await repo.loadAll();
       this.repo = repo;
@@ -92,10 +93,18 @@ export class GangService {
   /** Resolves once every queued write/load has settled. */
   flush(): Promise<void> { return this.queue.flush(); }
 
-  /** Drain the queue, then close the database. Best effort (used at plugin end). */
+  /**
+   * Stop serving, then drain the queue and close the database. Best effort (used at plugin end):
+   * if the host tears the context down first, the still-queued writes are lost — so the count at
+   * the moment of shutdown is logged to make that visible.
+   */
   shutdown(): Promise<void> {
     const db = this.db;
     this.ready = false;
+    const queued = this.queue.size;
+    this.log(queued > 0
+      ? `[gangs] shutting down with ${queued} database write(s) still queued; they are lost if the plugin context is torn down before they finish`
+      : "[gangs] shutting down with no queued database writes");
     return this.queue.flush().then(() => db?.close?.()).then(() => undefined);
   }
 

@@ -16,6 +16,10 @@
         "type": "string",
         "default": "default"
       },
+      "db_dialect": {
+        "type": "string",
+        "default": "sqlite"
+      },
       "currency_name": {
         "type": "string",
         "default": "credits"
