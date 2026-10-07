@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { Db, ExecuteResult, Row, SqlValue } from "../../src/db/db";
+import type { Db, ExecuteResult, Row, SqlValue } from "../../src/store/db";
 
 const bind = (p: SqlValue[]): SqlValue[] =>
   p.map((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v));
