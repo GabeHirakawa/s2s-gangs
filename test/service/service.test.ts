@@ -170,7 +170,7 @@ describe("GangService — gangs & persistence", () => {
     let fail = false;
     const db: Db = {
       query: (s, p) => real.query(s, p),
-      execute: (s, p) => (fail && s.startsWith("INSERT INTO gang_gangs") ? Promise.reject(new Error("disk full")) : real.execute(s, p)),
+      execute: (s, p) => (fail && s.startsWith("INSERT INTO `gang_gangs`") ? Promise.reject(new Error("disk full")) : real.execute(s, p)),
     };
     const h = await harness({ db });
     await h.connect(S.owner, "O");
@@ -259,5 +259,21 @@ describe("GangService — membership & ranks", () => {
     svc.revokeInvite(gangId, S.dave);
     expect(svc.outgoingInvites(gangId)).toEqual([]);
     expect(svc.pendingInvites(S.dave)).toEqual([]);
+  });
+});
+
+describe("GangService — shutdown", () => {
+  it("logs how many writes were still queued", async () => {
+    const h = await harness();
+    await h.connect(S.owner, "O");
+    h.gangs.svc.createGang("G", S.owner);
+    h.gangs.svc.setGangStat(1, "x", 1);
+    const done = h.gangs.svc.shutdown();
+    expect(h.logs.at(-1)).toMatch(/2 database write\(s\) still queued/);
+    await done;
+    expect(h.gangs.svc.isReady()).toBe(false);
+    const h2 = await harness();
+    await h2.gangs.svc.shutdown();
+    expect(h2.logs.at(-1)).toMatch(/no queued database writes/);
   });
 });

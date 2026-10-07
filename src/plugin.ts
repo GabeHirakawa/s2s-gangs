@@ -10,6 +10,7 @@ import type { CmdCtx, OnlinePlayer } from "./commands/ctx";
 import { runCredits } from "./commands/credits";
 import { openGangMenu } from "./menus/menus";
 import { resolveGangChat } from "./perks/gang-chat";
+import { parseDialect } from "./store/dialect";
 
 let gangs: Gangs | null = null;
 let msg: Messages = makeMessages("Gangs>");
@@ -105,7 +106,13 @@ export function OnPluginStart(): void {
 
   const prefix = config.getString("table_prefix") || "gang";
   const connection = config.getString("db_connection") || "default";
-  g.svc.start(() => Database.open(connection), prefix);
+  const rawDialect = config.getString("db_dialect");
+  let dialect = parseDialect(rawDialect);
+  if (dialect === null) {
+    console.log(`[gangs] unknown db_dialect "${rawDialect}" (expected sqlite | mysql | postgres); using sqlite`);
+    dialect = "sqlite";
+  }
+  g.svc.start(() => Database.open(connection), prefix, dialect);
 
   // Hot (re)load: players already on the server get loaded too (queued after the boot load).
   for (const c of Clients.all()) connected(c);
