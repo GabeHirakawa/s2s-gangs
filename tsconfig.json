@@ -4,9 +4,9 @@
     "noEmit": true,
     "moduleResolution": "bundler",
     "module": "ESNext",
-    "target": "ES2020",
+    "target": "ES2024",
     "lib": [
-      "ES2020"
+      "ES2024"
     ],
     "types": [],
     "skipLibCheck": true,
@@ -14,6 +14,7 @@
   },
   "include": [
     "src",
+    ".s2script/*.d.ts",
     "node_modules/@s2script/sdk/globals.d.ts"
   ]
 }
