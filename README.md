@@ -26,6 +26,7 @@ Drop `dist/_gangs_api.s2sp` into `addons/s2script/plugins/`. The plugin id is th
 |---|---|---|
 | `table_prefix` | `gang` | prefix of every table (`gang_gangs`, `gang_players`, …) |
 | `db_connection` | `default` | named connection passed to `Database.open` |
+| `db_dialect` | `sqlite` | SQL generated for `sqlite`, `mysql` (also `mariadb`) or `postgres`; must match the connection's driver |
 | `currency_name` | `credits` | word used for credits in replies (live-reloaded) |
 | `chat_tag` | `Gangs>` | prefix of plugin replies (live-reloaded) |
 
@@ -138,7 +139,8 @@ test/                    vitest suite (better-sqlite3)
 
 ## Database
 
-Upstream-compatible tables: `<p>_gangs`, `<p>_players`, `<p>_ranks`, and one instance table per
+All SQL goes through `src/store/dialect.ts` (identifier quoting, upserts, Postgres parameter
+casts) selected by `db_dialect`. Upstream-compatible tables: `<p>_gangs`, `<p>_players`, `<p>_ranks`, and one instance table per
 native stat (`<p>_gang_stats_<id>`, `<p>_player_stats_<id>`). Any other stat id (for example the
 `perk:<id>` levels of external perks) lives in `<p>_gang_stat_values` / `<p>_player_stat_values`
 as JSON text. New gangs get `max(id)+1` with an explicit id.
@@ -146,6 +148,6 @@ as JSON text. New gangs get `max(id)+1` with an explicit id.
 ## Not verified
 
 Nothing here has run on a live CS2 server: the unit suite and `s2s build` gate are offline. In
-particular gang chat suppression, menu rendering, `fakeCommand` for custom perks, and the SQL against
-MySQL/Postgres (the repo uses SQLite-style `ON CONFLICT` upserts and backtick-quoted `Rank`) are
-unverified. See `docs/superpowers/specs/2026-10-07-sdk-0.27-port-design.md`.
+particular gang chat suppression, menu rendering and `fakeCommand` for custom perks are unverified.
+SQL is generated per `db_dialect` (`src/store/dialect.ts`): SQLite is execution-tested; the MySQL
+and Postgres statements are only string-tested and have not run against a real server. See `docs/superpowers/specs/2026-10-07-sdk-0.27-port-design.md`.
