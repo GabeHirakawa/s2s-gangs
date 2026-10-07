@@ -3,7 +3,7 @@ import type {
   ReadyEvent,
 } from "../../api";
 
-/** Payload per `@gangs/api` forward (mirrors `Contract["forwards"]`). */
+/** Payload per `@edgegamers/gangs` forward (mirrors `Contract["forwards"]`). */
 export interface ForwardPayloads {
   OnReady: ReadyEvent;
   OnGangCreated: GangEvent;

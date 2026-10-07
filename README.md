@@ -4,7 +4,7 @@ A port of [edgegamers/Gangs](https://github.com/edgegamers/Gangs) (C# / CounterS
 [s2script](https://s2script.com) for Counter-Strike 2: player gangs with ranks and permissions,
 invitations and a door policy, a credits economy with a gang bank, purchasable perks (capacity,
 gang chat, MOTD, plus perks contributed by other plugins), interactive menus, and a typed
-cross-plugin service, **`@gangs/api`**.
+cross-plugin service, **`@edgegamers/gangs`**.
 
 Built against `@s2script/sdk` **0.27** and `@s2script/cs2` **0.19** with **interop protocol 2**
 (host API 3).
@@ -14,11 +14,11 @@ Built against `@s2script/sdk` **0.27** and `@s2script/cs2` **0.19** with **inter
 ```bash
 npm install
 npx vitest run        # SDK-free unit tests (cache, write queue, api, commands, menus) against SQLite
-npx s2s build .       # typecheck + lint + contract check → dist/_gangs_api.s2sp
+npx s2s build .       # typecheck + lint + contract check → dist/_edgegamers_gangs.s2sp
 ```
 
-Drop `dist/_gangs_api.s2sp` into `addons/s2script/plugins/`. The plugin id is the package name,
-`@gangs/api`.
+Drop `dist/_edgegamers_gangs.s2sp` into `addons/s2script/plugins/`. The plugin id is the package name,
+`@edgegamers/gangs`.
 
 ## Configuration
 
@@ -59,7 +59,7 @@ Drop `dist/_gangs_api.s2sp` into `addons/s2script/plugins/`. The plugin id is th
 Gang chat: once the gang owns the **Gang Chat** perk, a member whose rank holds `SEND_GANG_CHAT`
 types `.message` to talk to online gang members. Any other `.` message is ordinary public chat.
 
-## `@gangs/api` (1.0.0)
+## `@edgegamers/gangs` (1.0.0)
 
 The contract is [`api.d.ts`](api.d.ts) — self-contained, protocol 2. **Every method is
 synchronous** and answers from Gangs' in-memory cache; writes update the cache immediately and are
@@ -70,12 +70,12 @@ empty/null/0 and writes return false; `OnReady` fires once it flips.
 // your plugin's package.json
 "s2script": {
   "interfaceProtocol": 2,
-  "optionalPluginDependencies": { "@gangs/api": "^1.0.0" }
+  "optionalPluginDependencies": { "@edgegamers/gangs": "^1.0.0" }
 }
 ```
 
 ```bash
-npx s2s add @gangs/api   # vendors the verified api.d.ts into .s2script/types/
+npx s2s add @edgegamers/gangs   # vendors the verified api.d.ts into .s2script/types/
 ```
 
 ```ts
@@ -84,7 +84,7 @@ import { watchOptional, pluginId } from "@s2script/sdk";
 
 export function OnPluginStart(): void {
   const me = pluginId();
-  watchOptional("@gangs/api", (gangs) => {
+  watchOptional("@edgegamers/gangs", (gangs) => {
     const register = (): void => {
       gangs.registerPerk(me, { id: "smoke", name: "Smoke Color", description: "Coloured smokes", costs: [5000, 10000] });
     };
@@ -115,7 +115,7 @@ Notes for consumers:
 ### Migrating from 0.x
 
 0.x was protocol 1: a namespaced, **Promise-returning** object obtained with
-`ctx.use<GangsApi>("@gangs/api")`, with snake_case events (`member_joined`, …). 1.0.0 is a breaking
+`ctx.use<GangsApi>("@edgegamers/gangs")`, with snake_case events (`member_joined`, …). 1.0.0 is a breaking
 redesign: flat synchronous methods, PascalCase protocol-2 forwards, `Gang.id` instead of `gangId`,
 `Member` instead of `GangPlayer`. Rebuild consumers against the new `api.d.ts` with
 `interfaceProtocol: 2` and `^1.0.0`; drop every `await` on Gangs calls. Rank/invite/gang mutation
@@ -124,14 +124,14 @@ methods are no longer part of the service — they are Gangs' own commands and m
 ## Layout
 
 ```
-api.d.ts                 the @gangs/api protocol-2 contract (the distributable types)
+api.d.ts                 the @edgegamers/gangs protocol-2 contract (the distributable types)
 src/plugin.ts            runtime wiring: OnPluginStart, publish, commands, client publics, gang chat
 src/menus/menus.ts       SDK Menu rendering (runtime only)
 src/service/             GangService (cache + mutations + forwards), composition root, forward types
 src/store/               SQL repo (upstream schema), stat descriptors/codecs, ordered WriteQueue
 src/eco/economy.ts       wallet / gang bank / bank-first purchases
 src/perks/               perk catalog (native + external), gang-chat resolver
-src/api/impl.ts          the synchronous, input-validating @gangs/api implementation
+src/api/impl.ts          the synchronous, input-validating @edgegamers/gangs implementation
 src/commands/            SDK-free command handlers
 src/menus/menu-*.ts      SDK-free menu models + router
 test/                    vitest suite (better-sqlite3)

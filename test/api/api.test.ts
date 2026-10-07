@@ -23,7 +23,7 @@ async function setup() {
   return { h, api: h.gangs.api, gangId: g.gangId };
 }
 
-describe("@gangs/api — shape", () => {
+describe("@edgegamers/gangs — shape", () => {
   it("implements exactly the contract methods, all synchronous", async () => {
     const { api } = await setup();
     expect(Object.keys(api).sort()).toEqual([...METHODS].sort());
@@ -37,7 +37,7 @@ describe("@gangs/api — shape", () => {
   });
 });
 
-describe("@gangs/api — before ready", () => {
+describe("@edgegamers/gangs — before ready", () => {
   it("reads empty/null/0 and writes false until OnReady", async () => {
     const h = await harness({ noFlush: true });
     const api = h.gangs.api;
@@ -61,7 +61,7 @@ describe("@gangs/api — before ready", () => {
   });
 });
 
-describe("@gangs/api — reads", () => {
+describe("@edgegamers/gangs — reads", () => {
   it("returns plain, wire-clean copies", async () => {
     const { api, gangId } = await setup();
     expect(api.getGang(gangId)).toEqual({ id: gangId, name: "Wolves" });
@@ -97,7 +97,7 @@ describe("@gangs/api — reads", () => {
   });
 });
 
-describe("@gangs/api — stats", () => {
+describe("@edgegamers/gangs — stats", () => {
   it("round-trips generic stats of every StatValue type, null clears", async () => {
     const { api, gangId } = await setup();
     for (const v of ["text", 42, 2.5, true, false]) {
@@ -132,7 +132,7 @@ describe("@gangs/api — stats", () => {
   });
 });
 
-describe("@gangs/api — economy & events", () => {
+describe("@edgegamers/gangs — economy & events", () => {
   it("grants and purchases emit OnBalanceChanged with exact, clean payloads", async () => {
     const { h, api, gangId } = await setup();
     expect(api.grantPlayer(S.owner, 100, "reward")).toBe(100);
@@ -181,7 +181,7 @@ describe("@gangs/api — economy & events", () => {
   });
 });
 
-describe("@gangs/api — perks & chat", () => {
+describe("@edgegamers/gangs — perks & chat", () => {
   it("registerPerk / listPerks / getPerkLevel / purchasePerk", async () => {
     const { api, gangId } = await setup();
     expect(api.registerPerk("smokes", { id: "smoke", name: "Smoke", description: "d", costs: [10] })).toBe(true);
