@@ -1,7 +1,7 @@
 {
-  "name": "@gangs/api",
+  "name": "@edgegamers/gangs",
   "version": "1.0.0",
-  "description": "Gangs for s2script (CS2): gangs, ranks, economy, perks and a synchronous @gangs/api service (interop protocol 2).",
+  "description": "Gangs for s2script (CS2): gangs, ranks, economy, perks and a synchronous @edgegamers/gangs service (interop protocol 2).",
   "main": "src/plugin.ts",
   "types": "api.d.ts",
   "s2script": {

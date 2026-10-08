@@ -65,7 +65,7 @@ export function OnPluginStart(): void {
   });
   gangs = g;
 
-  const iface = publish("@gangs/api", g.api);
+  const iface = publish("@edgegamers/gangs", g.api);
   const emit: Emit = (event, payload) => { iface.emit(event, payload as never); };
   g.svc.setEmitter(emit);
 

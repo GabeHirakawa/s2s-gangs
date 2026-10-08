@@ -1,6 +1,6 @@
 import type { SqlValue } from "./db";
 
-/** A public stat value (the `@gangs/api` StatValue). `null` means "absent". */
+/** A public stat value (the `@edgegamers/gangs` StatValue). `null` means "absent". */
 export type StatValue = string | number | boolean | null;
 /** A structured native stat (a multi-column upstream instance table), e.g. gang invitations. */
 export type StatRecord = Record<string, SqlValue>;

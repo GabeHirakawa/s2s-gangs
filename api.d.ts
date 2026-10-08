@@ -1,5 +1,5 @@
 /**
- * @gangs/api — the Gangs service contract (s2script interop protocol 2).
+ * @edgegamers/gangs — the Gangs service contract (s2script interop protocol 2).
  *
  * Every method is SYNCHRONOUS and answers from the plugin's in-memory cache. Gangs loads every
  * gang, rank, gang stat and gang member at start, and each connecting player's own row on
@@ -13,7 +13,7 @@
  * - Stat values are `string | number | boolean | null`; structured values belong in a JSON string.
  *
  * This file is self-contained: a consumer outside this repository checks in a verbatim copy at
- * `.s2script/types/@gangs/api/index.d.ts` (or runs `s2s add @gangs/api`).
+ * `.s2script/types/@edgegamers/gangs/index.d.ts` (or runs `s2s add @edgegamers/gangs`).
  */
 import type { Notification } from "@s2script/sdk/interfaces";
 
@@ -202,7 +202,7 @@ export interface GangsApi {
   sendGangChat(gangId: number, message: string): void;
 }
 
-/** Method exports (direct imports: `import { getGangOf } from "@gangs/api"`). */
+/** Method exports (direct imports: `import { getGangOf } from "@edgegamers/gangs"`). */
 export declare function isReady(): boolean;
 export declare function getGang(gangId: number): Gang | null;
 export declare function getGangOf(steamId: string): Gang | null;

@@ -51,7 +51,7 @@ export interface ApiDeps {
 }
 
 /**
- * The `@gangs/api` implementation: every method is synchronous over the service cache, validates
+ * The `@edgegamers/gangs` implementation: every method is synchronous over the service cache, validates
  * its (wire-copied) inputs, and returns plain data built fresh per call — never a cache reference.
  */
 export function buildGangsApi(d: ApiDeps): GangsApi {
